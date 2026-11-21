@@ -1,0 +1,38 @@
+# Android / Gradle / Kotlin & signing
+.gradle/
+.kotlin/
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+local.properties
+*.iml
+.idea/
+*.hprof
+*.jks
+*.keystore
+keystore.properties
+
+# Compiled binaries, native libraries & packages
+*.class
+*.dex
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+*.war
+*.ear
+*.aar
+*.apk
+*.ap_
+*.aab
+*.so
+*.dylib
+*.a
+*.o
+*.obj
+
+# OS / editor
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+*.log
