@@ -34,7 +34,8 @@ class BuildSlideDeckUseCase @Inject constructor(
                         id = comp.id,
                         slideIndex = nextSlideIndex++,
                         layout = layout,
-                        blocks = comp.articleBlocks.sortedBy { it.index }
+                        blocks = comp.articleBlocks.sortedBy { it.index },
+                        title = comp.title
                     )
                 } else {
                     val questionSlides = comp.questions.sortedBy { it.index }.mapIndexed { idx, q ->
@@ -61,7 +62,8 @@ class BuildSlideDeckUseCase @Inject constructor(
                             slideIndex = nextSlideIndex++,
                             layout = quizLayout,
                             quizType = comp.quizType,
-                            questions = questionSlides
+                            questions = questionSlides,
+                            title = comp.title
                         )
                     }
                 }
@@ -80,6 +82,7 @@ class BuildSlideDeckUseCase @Inject constructor(
         SlideDeck(
             workspaceId = workspace.id,
             title = workspace.title,
+            description = workspace.description,
             themeMode = resolveGlobalLayoutValue(
                 globalLayouts = workspace.globalLayouts,
                 key = "themeMode",

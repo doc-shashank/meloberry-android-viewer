@@ -98,7 +98,7 @@ fun LibraryScreen(
 
     MeloberryPageScaffold(
         title = "Meloberry Library",
-        subtitle = "Open an imported Study Session or Quiz, or import a .mbypkg exported by mby.exe.",
+        subtitle = "Open an imported Study Session or Quiz, or import a .mbypkg exported by Meloberry CLI (mby).",
         isLoading = uiState.isLoading,
         isEmpty = uiState.workspaces.isEmpty(),
         emptyIcon = Icons.Default.FolderOpen,

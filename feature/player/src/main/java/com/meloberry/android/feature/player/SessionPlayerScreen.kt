@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -38,6 +39,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -48,6 +50,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,6 +60,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -66,6 +70,7 @@ import com.meloberry.android.core.ui.components.MeloberrySnackbarEffect
 import com.meloberry.android.core.ui.components.PendingDocumentExportEffect
 import com.meloberry.android.core.ui.theme.LocalMeloberryColors
 import com.meloberry.android.core.ui.theme.MeloberryTheme
+import kotlinx.coroutines.launch
 
 @Composable
 fun SessionPlayerRoute(
@@ -100,6 +105,7 @@ fun SessionPlayerRoute(
     SessionPlayerScreen(
         uiState = uiState,
         onBack = onBack,
+        onStartSession = viewModel::onStartSession,
         onSlideChanged = viewModel::onSlideChanged,
         onSelectQuizQuestion = viewModel::onSelectQuizQuestion,
         onFinishAndAnalyze = viewModel::onFinishAndAnalyze,
@@ -121,6 +127,7 @@ fun SessionPlayerRoute(
 fun SessionPlayerScreen(
     uiState: SessionPlayerUiState,
     onBack: () -> Unit,
+    onStartSession: () -> Unit = {},
     onSlideChanged: (Int) -> Unit,
     onSelectQuizQuestion: (String, Int) -> Unit,
     onFinishAndAnalyze: () -> Unit,
@@ -188,6 +195,17 @@ fun SessionPlayerScreen(
                 message = "This workspace does not have any slides yet.",
                 onBack = onBack,
                 snackbarHostState = snackbarHostState,
+                modifier = modifier
+            )
+            return@MeloberryTheme
+        }
+
+        if (!uiState.hasStartedSession) {
+            SessionGreetingScreen(
+                uiState = uiState,
+                snackbarHostState = snackbarHostState,
+                onBack = onBack,
+                onStartSession = onStartSession,
                 modifier = modifier
             )
             return@MeloberryTheme
@@ -313,9 +331,9 @@ fun SessionPlayerScreen(
                                 )
                             }
 
-                            val prevComponentLabel = when (uiState.slides.getOrNull(activeIndex - 1)) {
-                                is SlideUiModel.ArticleSlide -> "Article"
-                                is SlideUiModel.QuizSlide -> "Quiz"
+                            val prevComponentLabel = when (val prevSlide = uiState.slides.getOrNull(activeIndex - 1)) {
+                                is SlideUiModel.ArticleSlide -> prevSlide.title?.takeIf { it.isNotBlank() } ?: "Article"
+                                is SlideUiModel.QuizSlide -> prevSlide.title?.takeIf { it.isNotBlank() } ?: "Quiz"
                                 is SlideUiModel.McqSlide -> "MCQ"
                                 is SlideUiModel.FlashcardSlide -> "Flashcard"
                                 null -> "Component"
@@ -403,41 +421,153 @@ fun SessionPlayerScreen(
                     .fillMaxSize()
                     .padding(innerPadding)
             ) { pageIndex ->
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp, vertical = 20.dp),
-                    contentAlignment = Alignment.TopCenter
-                ) {
-                    when (val slide = uiState.slides[pageIndex]) {
-                        is SlideUiModel.ArticleSlide -> ArticleSlideCard(slide = slide)
-                        is SlideUiModel.McqSlide -> McqSlideCard(
-                            slide = slide,
-                            runtimeState = uiState.mcqStates[slide.id] ?: McqSlideRuntimeState(),
-                            onToggleOption = { optIdx -> onToggleMcqOption(slide.id, optIdx) },
-                            onCheckAnswer = { onCheckMcqAnswer(slide.id) }
-                        )
-                        is SlideUiModel.FlashcardSlide -> FlashcardSlideCard(
-                            slide = slide,
-                            runtimeState = uiState.flashcardStates[slide.id] ?: FlashcardSlideRuntimeState(),
-                            onFlip = { onFlipFlashcard(slide.id) },
-                            onRate = { rating -> onRateFlashcard(slide.id, rating) }
-                        )
-                        is SlideUiModel.QuizSlide -> QuizBundleSlideContent(
-                            quizSlide = slide,
-                            activeQuestionIndex = (uiState.activeQuizQuestionIndex[slide.id] ?: 0)
-                                .coerceIn(0, (slide.questions.size - 1).coerceAtLeast(0)),
-                            slideTransitionMs = uiState.slideTransitionMs,
-                            mcqStates = uiState.mcqStates,
-                            flashcardStates = uiState.flashcardStates,
-                            onSelectQuestion = { qIdx -> onSelectQuizQuestion(slide.id, qIdx) },
-                            onToggleMcqOption = onToggleMcqOption,
-                            onCheckMcqAnswer = onCheckMcqAnswer,
-                            onFlipFlashcard = onFlipFlashcard,
-                            onRateFlashcard = onRateFlashcard
-                        )
+                val slideScrollState = rememberScrollState()
+                val scrollScope = rememberCoroutineScope()
+                Box(modifier = Modifier.fillMaxSize()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(slideScrollState)
+                            .padding(horizontal = 16.dp, vertical = 20.dp),
+                        contentAlignment = Alignment.TopCenter
+                    ) {
+                        when (val slide = uiState.slides[pageIndex]) {
+                            is SlideUiModel.ArticleSlide -> ArticleSlideCard(slide = slide)
+                            is SlideUiModel.McqSlide -> McqSlideCard(
+                                slide = slide,
+                                runtimeState = uiState.mcqStates[slide.id] ?: McqSlideRuntimeState(),
+                                onToggleOption = { optIdx -> onToggleMcqOption(slide.id, optIdx) },
+                                onCheckAnswer = { onCheckMcqAnswer(slide.id) }
+                            )
+                            is SlideUiModel.FlashcardSlide -> FlashcardSlideCard(
+                                slide = slide,
+                                runtimeState = uiState.flashcardStates[slide.id] ?: FlashcardSlideRuntimeState(),
+                                onFlip = { onFlipFlashcard(slide.id) },
+                                onRate = { rating -> onRateFlashcard(slide.id, rating) }
+                            )
+                            is SlideUiModel.QuizSlide -> QuizBundleSlideContent(
+                                quizSlide = slide,
+                                activeQuestionIndex = (uiState.activeQuizQuestionIndex[slide.id] ?: 0)
+                                    .coerceIn(0, (slide.questions.size - 1).coerceAtLeast(0)),
+                                slideTransitionMs = uiState.slideTransitionMs,
+                                mcqStates = uiState.mcqStates,
+                                flashcardStates = uiState.flashcardStates,
+                                onSelectQuestion = { qIdx -> onSelectQuizQuestion(slide.id, qIdx) },
+                                onToggleMcqOption = onToggleMcqOption,
+                                onCheckMcqAnswer = onCheckMcqAnswer,
+                                onFlipFlashcard = onFlipFlashcard,
+                                onRateFlashcard = onRateFlashcard
+                            )
+                        }
                     }
+
+                    if (slideScrollState.canScrollForward) {
+                        SmallFloatingActionButton(
+                            onClick = {
+                                scrollScope.launch {
+                                    slideScrollState.animateScrollTo(
+                                        (slideScrollState.value + 360).coerceAtMost(slideScrollState.maxValue)
+                                    )
+                                }
+                            },
+                            containerColor = palette.surface,
+                            contentColor = palette.accent,
+                            shape = CircleShape,
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(end = 16.dp, bottom = 14.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.KeyboardArrowDown,
+                                contentDescription = "Scroll down"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SessionGreetingScreen(
+    uiState: SessionPlayerUiState,
+    snackbarHostState: SnackbarHostState,
+    onBack: () -> Unit,
+    onStartSession: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val palette = LocalMeloberryColors.current
+    val itemCount = uiState.leafSlideCount.takeIf { it > 0 } ?: uiState.slides.size
+
+    Scaffold(
+        modifier = modifier.fillMaxSize(),
+        containerColor = palette.background,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        topBar = {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to Library", tint = palette.text)
+                }
+            }
+        }
+    ) { innerPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 24.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            FramedSlideCard(
+                tabLabel = "MELOBERRY",
+                maxWidthDp = 560,
+                contentPaddingDp = 28,
+                topContentPaddingDp = 20,
+                contentSpacingDp = 14
+            ) {
+                Text(
+                    text = uiState.title.ifBlank { uiState.workspaceId },
+                    color = palette.text,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    lineHeight = 30.sp
+                )
+                if (uiState.description.isNotBlank()) {
+                    Text(
+                        text = uiState.description,
+                        color = palette.muted,
+                        fontSize = 15.sp,
+                        lineHeight = 22.sp
+                    )
+                }
+                Text(
+                    text = "${uiState.slides.size} component(s)  •  $itemCount item(s)",
+                    color = palette.accent,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Button(
+                    onClick = onStartSession,
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.accent),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.padding(top = 6.dp)
+                ) {
+                    Text(
+                        text = "Start Session →",
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
                 }
             }
         }
@@ -509,6 +639,16 @@ private fun QuizBundleSlideContent(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        if (!quizSlide.title.isNullOrBlank()) {
+            Text(
+                text = quizSlide.title.orEmpty(),
+                color = palette.text,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()

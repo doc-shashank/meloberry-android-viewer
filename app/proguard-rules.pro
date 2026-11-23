@@ -21,3 +21,9 @@
 -keep class * extends androidx.lifecycle.ViewModel {
     <init>(...);
 }
+
+# JLatexMath-Android native LaTeX renderer (reflection & asset fonts)
+-keep class ru.noties.jlatexmath.** { *; }
+-keep class org.scilab.forge.jlatexmath.** { *; }
+-keep class ru.noties.jlatexmath.font.** { *; }
+-dontwarn org.scilab.forge.jlatexmath.**

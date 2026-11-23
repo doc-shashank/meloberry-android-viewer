@@ -28,5 +28,9 @@ dependencies {
     api(libs.androidx.lifecycle.viewmodel.compose)
 
     api(libs.coil.compose)
+    api(libs.coil.gif)
     api(libs.coil.svg)
+    implementation(libs.jlatexmath.android)
+
+    testImplementation(libs.junit)
 }

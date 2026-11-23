@@ -97,6 +97,9 @@ internal class MbypkgArchiveDataSource @Inject constructor(
                                     FileOutputStream(stagedAsset).buffered().use { out ->
                                         totalDecompressedBytes = copyEntryCapped(zip, out, fileName, totalDecompressedBytes)
                                     }
+                                    require(ImageAssetVerifier.isValidSafeImage(stagedAsset)) {
+                                        "Archive asset '$name' failed image verification."
+                                    }
                                 }
                             }
                         }
@@ -110,6 +113,9 @@ internal class MbypkgArchiveDataSource @Inject constructor(
             val workspaceJson = requireNotNull(workspaceRaw) { "Invalid .mbypkg archive: missing workspace.json" }
 
             val manifest = json.decodeFromString<PackageManifestDto>(manifestJson)
+            require(manifest.packageVersion.isBlank() || manifest.packageVersion == "1.0") {
+                "Unsupported packageVersion '${manifest.packageVersion}'."
+            }
             require(manifest.id.isNotBlank() && manifest.kind.isNotBlank()) {
                 "Corrupted manifest.json: id and kind are required."
             }
@@ -229,7 +235,7 @@ internal class MbypkgArchiveDataSource @Inject constructor(
 
         return if (kindText.equals("session", ignoreCase = true)) {
             val dto = json.decodeFromString<SessionPackageDto>(workspaceJson)
-            require(dto.id.isBlank() || dto.id == id) {
+            require(dto.id.isBlank() || dto.id.equals(id, ignoreCase = true)) {
                 "Mismatched workspace ID in workspace.json: '${dto.id}' != '$id'"
             }
             StudyWorkspace(
@@ -246,13 +252,16 @@ internal class MbypkgArchiveDataSource @Inject constructor(
             )
         } else {
             val dto = json.decodeFromString<QuizPackageDto>(workspaceJson)
-            require(dto.id.isBlank() || dto.id == id) {
+            require(dto.id.isBlank() || dto.id.equals(id, ignoreCase = true)) {
                 "Mismatched workspace ID in workspace.json: '${dto.id}' != '$id'"
             }
+            val resolvedTitle = dto.name?.takeIf { it.isNotBlank() } ?: id
+            val resolvedDesc = dto.description?.takeIf { it.isNotBlank() }
+                ?: "Standalone quiz (${dto.questions.size} questions)"
             StudyWorkspace(
                 id = id,
-                title = id,
-                description = "Quiz (${dto.quizType.lowercase()})",
+                title = resolvedTitle,
+                description = resolvedDesc,
                 kind = WorkspaceKind.QUIZ,
                 subType = dto.quizType.lowercase(),
                 activeComponentId = null,
@@ -265,8 +274,16 @@ internal class MbypkgArchiveDataSource @Inject constructor(
     }
 
     private fun mapComponent(dto: ComponentPackageDto, storageDirPath: String): ComponentModel {
+        require(dto.id.isBlank() || (SAFE_ID_REGEX.matches(dto.id) && !dto.id.contains(".."))) {
+            "Invalid component ID: '${dto.id}'"
+        }
+        require(dto.index >= 1) { "Invalid component index ${dto.index} on '${dto.id}'" }
         val kind = if (dto.kind.equals("Article", ignoreCase = true)) ComponentKind.ARTICLE else ComponentKind.QUIZ
         val blocks = dto.articleBlocks.sortedBy { it.index }.map { b ->
+            require(b.id.isBlank() || (SAFE_ID_REGEX.matches(b.id) && !b.id.contains(".."))) {
+                "Invalid article block ID: '${b.id}'"
+            }
+            require(b.index >= 1) { "Invalid article block index ${b.index} on '${b.id}'" }
             ArticleBlockModel(
                 id = b.id,
                 index = b.index,
@@ -274,6 +291,11 @@ internal class MbypkgArchiveDataSource @Inject constructor(
                 textContent = b.textContent,
                 imageFilePath = resolveAssetPath(storageDirPath, b.imagePath)
             )
+        }
+        dto.quiz?.let { qz ->
+            require(qz.id.isBlank() || (SAFE_ID_REGEX.matches(qz.id) && !qz.id.contains(".."))) {
+                "Invalid nested quiz ID: '${qz.id}'"
+            }
         }
         val questions = dto.quiz?.questions?.sortedBy { it.index }?.map { mapQuestion(it, storageDirPath) }.orEmpty()
         return ComponentModel(
@@ -283,20 +305,27 @@ internal class MbypkgArchiveDataSource @Inject constructor(
             quizType = dto.quiz?.quizType?.lowercase(),
             questions = questions,
             articleBlocks = blocks,
-            layoutOverrides = dto.layoutOverrides.orEmpty()
+            layoutOverrides = dto.layoutOverrides.orEmpty(),
+            title = dto.title?.takeIf { it.isNotBlank() }
         )
     }
 
     private fun mapQuestion(dto: QuestionPackageDto, storageDirPath: String): QuestionModel {
+        require(dto.id.isBlank() || (SAFE_ID_REGEX.matches(dto.id) && !dto.id.contains(".."))) {
+            "Invalid question ID: '${dto.id}'"
+        }
+        require(dto.index >= 1) { "Invalid question index ${dto.index} on '${dto.id}'" }
         val overrides = dto.layoutOverrides.orEmpty()
         return if (dto.questionType.equals("Mcq", ignoreCase = true)) {
+            val boundedMaxOptions = if (dto.maxOptions in 2..26) dto.maxOptions else 4
             McqQuestionModel(
                 id = dto.id,
                 index = dto.index,
                 promptText = dto.promptText.orEmpty(),
-                maxOptions = dto.maxOptions,
+                maxOptions = boundedMaxOptions,
                 isMultiCorrect = dto.isMultiCorrect,
                 options = dto.options.sortedBy { it.index }.map { opt ->
+                    require(opt.index >= 1) { "Invalid MCQ option index ${opt.index} on '${dto.id}'" }
                     McqOptionModel(
                         index = opt.index,
                         text = opt.text,
@@ -304,7 +333,9 @@ internal class MbypkgArchiveDataSource @Inject constructor(
                         isCorrect = opt.isCorrect
                     )
                 },
-                layoutOverrides = overrides
+                layoutOverrides = overrides,
+                promptImageFilePath = resolveAssetPath(storageDirPath, dto.promptImagePath),
+                explanation = dto.explanation?.takeIf { it.isNotBlank() }
             )
         } else {
             FlashcardQuestionModel(
@@ -330,9 +361,21 @@ internal class MbypkgArchiveDataSource @Inject constructor(
 
     private fun resolveAssetPath(storageDirPath: String, rawPath: String?): String? {
         if (rawPath.isNullOrBlank()) return null
-        val fileName = File(rawPath.replace('\\', '/')).name
-        if (fileName.isBlank()) return null
-        return File(File(storageDirPath, "assets"), fileName).absolutePath
+        val normalized = rawPath.trim().replace('\\', '/')
+        require(normalized.startsWith("assets/", ignoreCase = true)) {
+            "Unsafe asset path outside assets/: '$rawPath'"
+        }
+        val segments = normalized.split('/').filter { it.isNotEmpty() }
+        require(segments.size == 2 && segments[1] != "." && segments[1] != "..") {
+            "Invalid asset path '$rawPath'"
+        }
+        val assetsDir = File(storageDirPath, "assets")
+        val targetFile = File(assetsDir, segments[1])
+        val assetsPrefix = assetsDir.canonicalPath + File.separator
+        require(targetFile.canonicalPath.startsWith(assetsPrefix)) {
+            "Asset path escapes workspace assets directory: '$rawPath'"
+        }
+        return targetFile.absolutePath
     }
 
     private fun readEntryUtf8Capped(

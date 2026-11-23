@@ -34,12 +34,13 @@ internal class BundledSampleDataSource @Inject constructor() {
                     id = "Component_20261119_120001_001",
                     index = 1,
                     kind = "Article",
+                    title = "Overview & Formulas",
                     articleBlocks = listOf(
                         ArticleBlockPackageDto(
                             id = "ArtComp_20261119_120002_001",
                             index = 1,
                             kind = "Text",
-                            textContent = "# Welcome to Meloberry Android\n\nMeloberry `.mbypkg` bundles run **100% natively** in Jetpack Compose — supporting vertical **Markdown + SVG/Image Articles**, single & multi-correct **MCQs**, 3D-flipping **Flashcards**, and full telemetry export back to `mby analyze`."
+                            textContent = "# Welcome to Meloberry Android\n\nMeloberry `.mbypkg` bundles run **100% natively** in Jetpack Compose — supporting **Markdown + LaTeX + SVG/GIF/Image Articles**, single & multi-correct **MCQs** with explanations, 3D-flipping **Flashcards**, and full telemetry export back to `mby analyze`.\n\n\$\$v = u + at\$\$\n\n- [x] Offline LaTeX math (like \$E = mc^2\$) rendered natively without WebView\n- [x] Task lists, ~~strikethrough~~, tables, and [safe links](https://example.com)\n- [ ] Export your own package with `mby pkg export <wsId> android`"
                         ),
                         ArticleBlockPackageDto(
                             id = "ArtComp_20261119_120003_002",
@@ -59,6 +60,7 @@ internal class BundledSampleDataSource @Inject constructor() {
                     id = "Component_20261119_120005_002",
                     index = 2,
                     kind = "Quiz",
+                    title = "Architecture Check",
                     quiz = QuizPackageDto(
                         id = "Component_20261119_120005_002",
                         quizType = "Mixed",
@@ -68,6 +70,7 @@ internal class BundledSampleDataSource @Inject constructor() {
                                 index = 1,
                                 questionType = "Mcq",
                                 promptText = "Which archive file inside `.mbypkg` declares the workspace `kind` (`session` vs `quiz`) and `id`?",
+                                explanation = "`manifest.json` declares `packageVersion`, `kind`, `id`, `exportedAtUtc`, `assets[]`, and `targetPlatform`.",
                                 maxOptions = 4,
                                 isMultiCorrect = false,
                                 options = listOf(
@@ -82,6 +85,7 @@ internal class BundledSampleDataSource @Inject constructor() {
                                 index = 2,
                                 questionType = "Mcq",
                                 promptText = "Select **all** properties supported by Meloberry's 13-property `LayoutBoundsCatalog`:",
+                                explanation = "Both `slideTransitionMs` (`100..1200`) and `flipDurationMs` (`150..1000`) are bounded in `LayoutBoundsCatalog`.",
                                 maxOptions = 3,
                                 isMultiCorrect = true,
                                 options = listOf(
@@ -95,12 +99,12 @@ internal class BundledSampleDataSource @Inject constructor() {
                                 index = 3,
                                 questionType = "Flashcard",
                                 front = SidePackageDto(
-                                    text = "### Meloberry Pipeline\nTap card to flip for the answer",
+                                    text = "### Meloberry Pipeline\nBinary search complexity: \$O(\\log n)\$ — tap card to flip",
                                     imagePath = "assets/meloberry_flow.svg",
                                     position = "TextAboveImage"
                                 ),
                                 back = SidePackageDto(
-                                    text = "**`mby export android`** enforces a non-bypassable `lint` check and bundles content-only `.mbypkg` archives.",
+                                    text = "**`mby pkg export <wsId> android`** runs mandatory `check` lint and exports a verified `.mbypkg` archive.",
                                     imagePath = null,
                                     position = "TextBelowImage"
                                 )

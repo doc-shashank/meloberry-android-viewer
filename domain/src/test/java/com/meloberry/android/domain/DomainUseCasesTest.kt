@@ -68,6 +68,7 @@ class DomainUseCasesTest {
         val workspace = StudyWorkspace(
             id = "Session_1",
             title = "Meloberry Session",
+            description = "Physics overview",
             kind = WorkspaceKind.SESSION,
             subType = "session",
             activeComponentId = "Component_1",
@@ -81,7 +82,8 @@ class DomainUseCasesTest {
                     articleBlocks = listOf(
                         ArticleBlockModel("ArtComp_1", 1, ArticleBlockKind.TEXT, "# Intro", null)
                     ),
-                    layoutOverrides = mapOf("blockSpacingPx" to "28")
+                    layoutOverrides = mapOf("blockSpacingPx" to "28"),
+                    title = "Intro Section"
                 ),
                 ComponentModel(
                     id = "Component_2",
@@ -99,7 +101,8 @@ class DomainUseCasesTest {
                                 McqOptionModel(1, "3", null, false),
                                 McqOptionModel(2, "4", null, true)
                             ),
-                            layoutOverrides = mapOf("optionColumns" to "2")
+                            layoutOverrides = mapOf("optionColumns" to "2"),
+                            explanation = "Basic arithmetic"
                         ),
                         FlashcardQuestionModel(
                             id = "Q_2",
@@ -110,7 +113,8 @@ class DomainUseCasesTest {
                         )
                     ),
                     articleBlocks = emptyList(),
-                    layoutOverrides = mapOf("cardMaxWidthPx" to "960")
+                    layoutOverrides = mapOf("cardMaxWidthPx" to "960"),
+                    title = "Quick Check"
                 )
             ),
             standaloneQuestions = emptyList(),
@@ -122,14 +126,17 @@ class DomainUseCasesTest {
 
         val deck = useCase(workspace)
 
+        assertEquals("Physics overview", deck.description)
         assertEquals(ThemeMode.DARK, deck.themeMode)
         assertEquals(500, deck.slideTransitionMs)
         assertEquals(2, deck.slides.size)
 
         val articleSlide = deck.slides[0] as SlideUiModel.ArticleSlide
+        assertEquals("Intro Section", articleSlide.title)
         assertEquals(28, articleSlide.layout.blockSpacingDp)
 
         val quizSlide = deck.slides[1] as SlideUiModel.QuizSlide
+        assertEquals("Quick Check", quizSlide.title)
         assertEquals(2, quizSlide.questions.size)
 
         val mcqSlide = quizSlide.questions[0] as SlideUiModel.McqSlide

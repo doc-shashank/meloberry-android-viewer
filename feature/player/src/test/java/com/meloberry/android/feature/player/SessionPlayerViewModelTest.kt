@@ -81,7 +81,13 @@ class SessionPlayerViewModelTest {
         assertEquals(2, vm.uiState.value.slides.size)
         assertEquals(1, vm.uiState.value.totalMcqCount)
         assertEquals(0, vm.uiState.value.currentSlideIndex)
+        assertFalse(vm.uiState.value.hasStartedSession)
         assertFalse(vm.uiState.value.isFinished)
+
+        // Start session from Greeting Card -> starts session clock & Slide 0 dwell timer
+        vm.onStartSession()
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.hasStartedSession)
 
         // Advance time on Article slide (slide 0), move to bundled Quiz slide (slide 1)
         currentTimeMs = 4_500L
@@ -89,7 +95,7 @@ class SessionPlayerViewModelTest {
         advanceUntilIdle()
         assertEquals(1, savedStateHandle.get<Int>("currentSlideIndex"))
 
-        // Wrong first try on MCQ (Q0), then toggle clears checked UI before second try
+        // Wrong first try on MCQ (Q0), then toggle keeps isChecked true (matching CLI strictly) until re-checked
         vm.onToggleMcqOption("Q_Mcq1", 1)
         vm.onCheckMcqAnswer("Q_Mcq1")
         advanceUntilIdle()
@@ -99,7 +105,7 @@ class SessionPlayerViewModelTest {
 
         vm.onToggleMcqOption("Q_Mcq1", 2)
         advanceUntilIdle()
-        assertEquals(false, vm.uiState.value.mcqStates["Q_Mcq1"]?.isChecked)
+        assertEquals(true, vm.uiState.value.mcqStates["Q_Mcq1"]?.isChecked)
         assertEquals(1, vm.uiState.value.mcqStates["Q_Mcq1"]?.checkAttempts)
 
         vm.onCheckMcqAnswer("Q_Mcq1")

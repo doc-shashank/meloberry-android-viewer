@@ -22,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -85,11 +86,13 @@ private fun FlashcardFaceContent(
     onRate: (String) -> Unit
 ) {
     val palette = LocalMeloberryColors.current
+    val isCompact = LocalConfiguration.current.screenWidthDp < 600
+    val effectivePaddingDp = if (isCompact) layout.cardPaddingDp.coerceAtMost(24) else layout.cardPaddingDp
 
     FramedSlideCard(
         tabLabel = "FLASHCARD",
         maxWidthDp = layout.cardMaxWidthDp,
-        contentPaddingDp = layout.cardPaddingDp,
+        contentPaddingDp = effectivePaddingDp,
         bottomContentPaddingDp = 16,
         contentSpacingDp = 14,
         minHeightDp = 250

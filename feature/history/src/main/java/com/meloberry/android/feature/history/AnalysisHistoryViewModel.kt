@@ -14,11 +14,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+data class WorkspaceFilterOption(
+    val workspaceId: String,
+    val label: String
+)
 
 @HiltViewModel
 class AnalysisHistoryViewModel @Inject constructor(
@@ -26,25 +30,51 @@ class AnalysisHistoryViewModel @Inject constructor(
     private val aggregateUseCase: AggregateAnalysisHistoryUseCase
 ) : ViewModel() {
 
+    private val selectedWorkspaceId = MutableStateFlow<String?>(null)
     private val expandedRunId = MutableStateFlow<String?>(null)
     private val pendingExport = MutableStateFlow<PendingExportPayload?>(null)
+    private val pendingShareText = MutableStateFlow<String?>(null)
     private val userMessages = MutableStateFlow<List<UserMessage>>(emptyList())
 
-    private val runsWithStats = analysisRepository.observeAllRuns()
-        .map { runs -> runs to (if (runs.isEmpty()) null else aggregateUseCase(runs)) }
+    private val filteredRunsFlow = combine(
+        analysisRepository.observeAllRuns(),
+        selectedWorkspaceId
+    ) { allRuns, selectedId ->
+        val options = allRuns
+            .distinctBy { it.report.workspaceId }
+            .map { run ->
+                WorkspaceFilterOption(
+                    workspaceId = run.report.workspaceId,
+                    label = run.report.title.ifBlank { run.report.workspaceId }
+                )
+            }
+        val effectiveFilter = selectedId?.takeIf { id -> options.any { it.workspaceId == id } }
+        val filtered = if (effectiveFilter == null) {
+            allRuns
+        } else {
+            allRuns.filter { it.report.workspaceId == effectiveFilter }
+        }
+        val stats = if (filtered.isEmpty()) null else aggregateUseCase(filtered)
+        Triple(options, effectiveFilter, Triple(filtered, stats, allRuns.isEmpty()))
+    }
 
     val uiState: StateFlow<AnalysisHistoryUiState> = combine(
-        runsWithStats,
+        filteredRunsFlow,
         expandedRunId,
         pendingExport,
+        pendingShareText,
         userMessages
-    ) { (runs, stats), expanded, exportPayload, messages ->
+    ) { (options, activeFilter, runTriple), expanded, exportPayload, shareText, messages ->
+        val (runs, stats, _) = runTriple
         AnalysisHistoryUiState(
             isLoading = false,
+            availableWorkspaces = options,
+            selectedWorkspaceId = activeFilter,
             stats = stats,
             runs = runs,
             expandedRunId = expanded,
             pendingExport = exportPayload,
+            pendingShareText = shareText,
             userMessages = messages
         )
     }.stateIn(
@@ -52,6 +82,10 @@ class AnalysisHistoryViewModel @Inject constructor(
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = AnalysisHistoryUiState(isLoading = true)
     )
+
+    fun onSelectWorkspaceFilter(workspaceId: String?) {
+        selectedWorkspaceId.value = workspaceId
+    }
 
     fun onToggleExpand(runId: String) {
         expandedRunId.update { cur -> if (cur == runId) null else runId }
@@ -68,10 +102,26 @@ class AnalysisHistoryViewModel @Inject constructor(
         }
     }
 
+    fun onExportRunMarkdown(run: SavedAnalysisRun) {
+        pendingExport.value = PendingExportPayload(
+            suggestedFileName = "${run.runId}.analysis.md",
+            mimeType = "text/markdown",
+            content = run.markdown
+        )
+    }
+
+    fun onShareRunMarkdown(run: SavedAnalysisRun) {
+        pendingShareText.value = run.markdown
+    }
+
+    fun onShareConsumed() {
+        pendingShareText.value = null
+    }
+
     fun onSaveExportToUri(uriString: String, content: String) {
         viewModelScope.launch {
             analysisRepository.writeExportToUri(uriString, content)
-                .onSuccess { userMessages.update { it.appendMessage("Exported .analysis.json successfully.") } }
+                .onSuccess { userMessages.update { it.appendMessage("Exported report successfully.") } }
                 .onFailure { err -> userMessages.update { it.appendMessage(err.message ?: "Failed to export file.") } }
         }
     }

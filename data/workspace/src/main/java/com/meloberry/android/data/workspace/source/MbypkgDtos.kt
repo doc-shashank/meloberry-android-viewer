@@ -28,7 +28,8 @@ internal data class ComponentPackageDto(
     val kind: String = "",
     val quiz: QuizPackageDto? = null,
     val articleBlocks: List<ArticleBlockPackageDto> = emptyList(),
-    val layoutOverrides: Map<String, String>? = null
+    val layoutOverrides: Map<String, String>? = null,
+    val title: String? = null
 )
 
 @Serializable
@@ -44,7 +45,9 @@ internal data class ArticleBlockPackageDto(
 internal data class QuizPackageDto(
     val id: String = "",
     val quizType: String = "Mixed",
-    val questions: List<QuestionPackageDto> = emptyList()
+    val questions: List<QuestionPackageDto> = emptyList(),
+    val name: String? = null,
+    val description: String? = null
 )
 
 @Serializable
@@ -58,7 +61,9 @@ internal data class QuestionPackageDto(
     val options: List<OptionPackageDto> = emptyList(),
     val front: SidePackageDto? = null,
     val back: SidePackageDto? = null,
-    val layoutOverrides: Map<String, String>? = null
+    val layoutOverrides: Map<String, String>? = null,
+    val promptImagePath: String? = null,
+    val explanation: String? = null
 )
 
 @Serializable

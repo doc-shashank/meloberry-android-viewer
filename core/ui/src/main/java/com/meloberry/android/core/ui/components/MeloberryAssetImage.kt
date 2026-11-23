@@ -46,8 +46,11 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.ImageLoader
 import coil.compose.AsyncImage
+import coil.decode.GifDecoder
+import coil.decode.ImageDecoderDecoder
 import coil.decode.SvgDecoder
 import coil.request.ImageRequest
+import android.os.Build
 import java.io.File
 
 private object SharedSvgImageLoader {
@@ -60,6 +63,11 @@ private object SharedSvgImageLoader {
             instance ?: ImageLoader.Builder(context.applicationContext)
                 .components {
                     add(SvgDecoder.Factory())
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        add(ImageDecoderDecoder.Factory())
+                    } else {
+                        add(GifDecoder.Factory())
+                    }
                 }
                 .build()
                 .also { instance = it }

@@ -3,11 +3,11 @@ package com.meloberry.android.data.workspace
 import com.meloberry.android.core.model.ArticleBlockKind
 import com.meloberry.android.core.model.ComponentKind
 import com.meloberry.android.core.model.FlashcardQuestionModel
-import com.meloberry.android.core.model.LayoutTargetType
 import com.meloberry.android.core.model.McqQuestionModel
 import com.meloberry.android.core.model.MediaPosition
 import com.meloberry.android.core.model.WorkspaceKind
 import com.meloberry.android.data.workspace.source.BundledSampleDataSource
+import com.meloberry.android.data.workspace.source.ImageAssetVerifier
 import com.meloberry.android.data.workspace.source.MbypkgArchiveDataSource
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -49,6 +49,7 @@ class MbypkgArchiveDataSourceTest {
 
         val article = ws.components[0]
         assertEquals(ComponentKind.ARTICLE, article.kind)
+        assertEquals("Overview & Formulas", article.title)
         assertEquals(3, article.articleBlocks.size)
         val imgBlock = article.articleBlocks[1]
         assertEquals(ArticleBlockKind.IMAGE, imgBlock.kind)
@@ -56,8 +57,10 @@ class MbypkgArchiveDataSourceTest {
 
         val quizComp = ws.components[1]
         assertEquals(ComponentKind.QUIZ, quizComp.kind)
+        assertEquals("Architecture Check", quizComp.title)
         val mcq = quizComp.questions[0] as McqQuestionModel
         assertEquals(4, mcq.options.size)
+        assertTrue(!mcq.explanation.isNullOrBlank())
         assertNull(mcq.layoutOverrides["optionColumns"])
         val card = quizComp.questions[2] as FlashcardQuestionModel
         assertEquals(MediaPosition.ABOVE_IMAGE, card.front.position)
@@ -147,7 +150,7 @@ class MbypkgArchiveDataSourceTest {
             )
             zip.closeEntry()
             zip.putNextEntry(ZipEntry("assets/fig..1.png"))
-            zip.write(byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47))
+            zip.write(byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A))
             zip.closeEntry()
         }
 
@@ -195,6 +198,94 @@ class MbypkgArchiveDataSourceTest {
         assertTrue(
             runCatching {
                 archiveSource.extractAndParse(ByteArrayInputStream(invalidKindBytes)) { id ->
+                    File(tempFolder.root, id)
+                }
+            }.isFailure
+        )
+    }
+
+    @Test
+    fun extractAndParse_parsesStandaloneQuizMetadata_mcqPromptImageAndExplanation_andCaseInsensitiveId() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val archiveSource = MbypkgArchiveDataSource(dispatcher)
+
+        val pngHeader = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+        val baos = ByteArrayOutputStream()
+        ZipOutputStream(baos).use { zip ->
+            zip.putNextEntry(ZipEntry("manifest.json"))
+            zip.write("""{"packageVersion":"1.0","kind":"quiz","id":"Set_Demo_1","assets":["assets/prompt.png"]}""".encodeToByteArray())
+            zip.closeEntry()
+            zip.putNextEntry(ZipEntry("workspace.json"))
+            zip.write(
+                """{"id":"set_demo_1","quizType":"Mcq","name":"Kinematics Quiz","description":"Velocity & acceleration","questions":[{"id":"Q_1","index":1,"questionType":"Mcq","promptText":"Identify curve","promptImagePath":"assets/prompt.png","explanation":"Slope is acceleration.","maxOptions":2,"isMultiCorrect":false,"options":[{"index":1,"text":"A","isCorrect":true},{"index":2,"text":"B","isCorrect":false}]}]}""".encodeToByteArray()
+            )
+            zip.closeEntry()
+            zip.putNextEntry(ZipEntry("assets/prompt.png"))
+            zip.write(pngHeader)
+            zip.closeEntry()
+        }
+
+        val bundle = archiveSource.extractAndParse(ByteArrayInputStream(baos.toByteArray())) { id ->
+            File(tempFolder.root, id)
+        }
+        val ws = bundle.workspace
+        assertEquals("Kinematics Quiz", ws.title)
+        assertEquals("Velocity & acceleration", ws.description)
+        val mcq = ws.standaloneQuestions.single() as McqQuestionModel
+        assertTrue(File(mcq.promptImageFilePath!!).exists())
+        assertEquals("Slope is acceleration.", mcq.explanation)
+    }
+
+    @Test
+    fun imageAssetVerifier_andArchiveSource_rejectCorruptOrDangerousAssets_andPathsOutsideAssets() = runTest {
+        assertTrue(ImageAssetVerifier.isValidSafeImage(byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)))
+        assertTrue(ImageAssetVerifier.isValidSafeImage(byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte())))
+        assertTrue(ImageAssetVerifier.isValidSafeImage("GIF89a".encodeToByteArray()))
+        assertTrue(ImageAssetVerifier.isValidSafeImage("RIFF\u0000\u0000\u0000\u0000WEBP".encodeToByteArray()))
+        assertTrue(ImageAssetVerifier.isValidSafeImage("BM".encodeToByteArray()))
+        assertTrue(ImageAssetVerifier.isValidSafeImage("<svg xmlns='http://www.w3.org/2000/svg'><circle r='5'/></svg>".encodeToByteArray()))
+
+        assertTrue(!ImageAssetVerifier.isValidSafeImage("not an image".encodeToByteArray()))
+        assertTrue(!ImageAssetVerifier.isValidSafeImage("<svg><script>alert(1)</script></svg>".encodeToByteArray()))
+        assertTrue(!ImageAssetVerifier.isValidSafeImage("<svg onload='alert(1)'></svg>".encodeToByteArray()))
+
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val archiveSource = MbypkgArchiveDataSource(dispatcher)
+
+        val dangerousSvgPkg = ByteArrayOutputStream()
+        ZipOutputStream(dangerousSvgPkg).use { zip ->
+            zip.putNextEntry(ZipEntry("manifest.json"))
+            zip.write("""{"packageVersion":"1.0","kind":"quiz","id":"Set_BadSvg","assets":["assets/bad.svg"]}""".encodeToByteArray())
+            zip.closeEntry()
+            zip.putNextEntry(ZipEntry("workspace.json"))
+            zip.write("""{"id":"Set_BadSvg","quizType":"Mcq","questions":[]}""".encodeToByteArray())
+            zip.closeEntry()
+            zip.putNextEntry(ZipEntry("assets/bad.svg"))
+            zip.write("<svg><script>evil()</script></svg>".encodeToByteArray())
+            zip.closeEntry()
+        }
+        assertTrue(
+            runCatching {
+                archiveSource.extractAndParse(ByteArrayInputStream(dangerousSvgPkg.toByteArray())) { id ->
+                    File(tempFolder.root, id)
+                }
+            }.isFailure
+        )
+
+        val outsideAssetsPkg = ByteArrayOutputStream()
+        ZipOutputStream(outsideAssetsPkg).use { zip ->
+            zip.putNextEntry(ZipEntry("manifest.json"))
+            zip.write("""{"packageVersion":"1.0","kind":"quiz","id":"Set_BadPath","assets":[]}""".encodeToByteArray())
+            zip.closeEntry()
+            zip.putNextEntry(ZipEntry("workspace.json"))
+            zip.write(
+                """{"id":"Set_BadPath","quizType":"Mcq","questions":[{"id":"Q_1","index":1,"questionType":"Mcq","promptText":"Test","promptImagePath":"../secret.png","options":[{"index":1,"text":"A","isCorrect":true},{"index":2,"text":"B","isCorrect":false}]}]}""".encodeToByteArray()
+            )
+            zip.closeEntry()
+        }
+        assertTrue(
+            runCatching {
+                archiveSource.extractAndParse(ByteArrayInputStream(outsideAssetsPkg.toByteArray())) { id ->
                     File(tempFolder.root, id)
                 }
             }.isFailure

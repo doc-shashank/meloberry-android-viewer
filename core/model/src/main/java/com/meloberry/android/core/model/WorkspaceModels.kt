@@ -103,7 +103,8 @@ data class ComponentModel(
     val quizType: String?,
     val questions: List<QuestionModel>,
     val articleBlocks: List<ArticleBlockModel>,
-    val layoutOverrides: Map<String, String>
+    val layoutOverrides: Map<String, String>,
+    val title: String? = null
 )
 
 data class ArticleBlockModel(
@@ -135,7 +136,9 @@ data class McqQuestionModel(
     val maxOptions: Int,
     val isMultiCorrect: Boolean,
     val options: List<McqOptionModel>,
-    override val layoutOverrides: Map<String, String>
+    override val layoutOverrides: Map<String, String>,
+    val promptImageFilePath: String? = null,
+    val explanation: String? = null
 ) : QuestionModel {
     override val type: QuestionType = QuestionType.MCQ
 }
@@ -183,7 +186,8 @@ sealed interface SlideUiModel {
         override val id: String,
         override val slideIndex: Int,
         override val layout: ResolvedSlideLayout,
-        val blocks: List<ArticleBlockModel>
+        val blocks: List<ArticleBlockModel>,
+        val title: String? = null
     ) : SlideUiModel
 
     data class McqSlide(
@@ -205,13 +209,15 @@ sealed interface SlideUiModel {
         override val slideIndex: Int,
         override val layout: ResolvedSlideLayout,
         val quizType: String?,
-        val questions: List<QuestionSlideItem>
+        val questions: List<QuestionSlideItem>,
+        val title: String? = null
     ) : SlideUiModel
 }
 
 data class SlideDeck(
     val workspaceId: String,
     val title: String,
+    val description: String = "",
     val themeMode: ThemeMode,
     val slideTransitionMs: Int,
     val slides: List<SlideUiModel>

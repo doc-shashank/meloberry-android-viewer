@@ -28,6 +28,7 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 private data class PlayerTelemetryState(
+    val hasStartedSession: Boolean = false,
     val currentSlideIndex: Int = 0,
     val activeQuizQuestionIndex: Map<String, Int> = emptyMap(),
     val isFinished: Boolean = false,
@@ -79,12 +80,13 @@ class SessionPlayerViewModel internal constructor(
     )
 
     private val workspaceId: String = savedStateHandle.get<String>("workspaceId").orEmpty()
-    private val sessionStartedEpochMs: Long = nowMs()
+    private var sessionStartedEpochMs: Long = nowMs()
     private var activeSlideEnterEpochMs: Long? = null
     private var latestDeck: SlideDeck? = null
 
     private val telemetry = MutableStateFlow(
         PlayerTelemetryState(
+            hasStartedSession = savedStateHandle.get<Boolean>(KEY_HAS_STARTED_SESSION) ?: false,
             currentSlideIndex = savedStateHandle.get<Int>(KEY_CURRENT_SLIDE_INDEX) ?: 0
         )
     )
@@ -118,9 +120,12 @@ class SessionPlayerViewModel internal constructor(
                     notFound = false,
                     workspaceId = deck.workspaceId,
                     title = deck.title,
+                    description = deck.description,
                     themeMode = deck.themeMode,
                     slideTransitionMs = deck.slideTransitionMs,
                     slides = deck.slides,
+                    leafSlideCount = deck.leafSlides().size,
+                    hasStartedSession = state.hasStartedSession,
                     currentSlideIndex = state.currentSlideIndex.coerceIn(0, maxSlideIndex),
                     activeQuizQuestionIndex = state.activeQuizQuestionIndex,
                     isFinished = state.isFinished,
@@ -143,7 +148,7 @@ class SessionPlayerViewModel internal constructor(
     )
 
     private fun initializeVisitsIfNeeded(deck: SlideDeck) {
-        if (deck.slides.isEmpty()) return
+        if (deck.slides.isEmpty() || !telemetry.value.hasStartedSession) return
         if (activeSlideEnterEpochMs == null) {
             activeSlideEnterEpochMs = nowMs()
         }
@@ -153,6 +158,28 @@ class SessionPlayerViewModel internal constructor(
             telemetry.update { cur ->
                 cur.copy(visitedBySlideId = cur.visitedBySlideId + (firstLeafId to 1))
             }
+        }
+    }
+
+    fun onStartSession() {
+        val deck = latestDeck
+        val startMs = nowMs()
+        sessionStartedEpochMs = startMs
+        activeSlideEnterEpochMs = startMs
+        savedStateHandle[KEY_HAS_STARTED_SESSION] = true
+        telemetry.update { cur ->
+            val updatedVisits = if (deck != null && deck.slides.isNotEmpty()) {
+                val initialIdx = cur.currentSlideIndex.coerceIn(0, deck.slides.lastIndex)
+                val firstLeafId = activeLeafSlideId(deck, initialIdx, cur.activeQuizQuestionIndex)
+                if (firstLeafId != null && (cur.visitedBySlideId[firstLeafId] ?: 0) == 0) {
+                    cur.visitedBySlideId + (firstLeafId to 1)
+                } else {
+                    cur.visitedBySlideId
+                }
+            } else {
+                cur.visitedBySlideId
+            }
+            cur.copy(hasStartedSession = true, visitedBySlideId = updatedVisits)
         }
     }
 
@@ -223,7 +250,7 @@ class SessionPlayerViewModel internal constructor(
                 if (optionIndex in current.selectedIndices) emptySet() else setOf(optionIndex)
             }
             val nextState = if (nextSelected != current.selectedIndices) {
-                current.copy(selectedIndices = nextSelected, isChecked = false)
+                current.copy(selectedIndices = nextSelected)
             } else {
                 current
             }
@@ -415,6 +442,7 @@ class SessionPlayerViewModel internal constructor(
 
     private companion object {
         const val KEY_CURRENT_SLIDE_INDEX = "currentSlideIndex"
+        const val KEY_HAS_STARTED_SESSION = "hasStartedSession"
     }
 }
 
