@@ -1,6 +1,7 @@
 package com.meloberry.android.domain
 
 import com.meloberry.android.core.model.DefaultDispatcher
+import com.meloberry.android.core.model.MeloberryVersionInfo
 import com.meloberry.android.core.model.SessionAnalysisReport
 import com.meloberry.android.core.model.SessionAnalysisSummary
 import com.meloberry.android.core.model.SlideAnalysisEntry
@@ -21,6 +22,18 @@ data class BuiltAnalysisOutput(
 class BuildAnalysisReportUseCase @Inject constructor(
     @DefaultDispatcher private val defaultDispatcher: CoroutineDispatcher
 ) {
+    companion object {
+        val GRADED_QUESTION_KINDS: Set<String> = setOf(
+            "mcq",
+            "fill-blank",
+            "assertion-reason",
+            "spot-error",
+            "diff",
+            "mechanism",
+            "relabel"
+        )
+    }
+
     suspend operator fun invoke(
         workspaceId: String,
         title: String,
@@ -28,16 +41,16 @@ class BuildAnalysisReportUseCase @Inject constructor(
         completedAtEpochMs: Long,
         slideEntries: List<SlideAnalysisEntry>
     ): BuiltAnalysisOutput = withContext(defaultDispatcher) {
-        val mcqs = slideEntries.filter { it.kind == "mcq" }
+        val graded = slideEntries.filter { it.kind in GRADED_QUESTION_KINDS }
         val cards = slideEntries.filter { it.kind == "flashcard" }
         val articles = slideEntries.filter { it.kind == "article" }
 
-        val mcqCorrectFinal = mcqs.count { it.isCorrect == true }
-        val mcqCorrectFirstTry = mcqs.count { it.firstTryCorrect == true }
-        val mcqAccuracyPercent = if (mcqs.isEmpty()) {
+        val gradedCorrectFinal = graded.count { it.isCorrect == true }
+        val gradedCorrectFirstTry = graded.count { it.firstTryCorrect == true }
+        val gradedAccuracyPercent = if (graded.isEmpty()) {
             100.0
         } else {
-            ((mcqCorrectFinal.toDouble() / mcqs.size) * 1000.0).roundToInt() / 10.0
+            ((gradedCorrectFinal.toDouble() / graded.size) * 1000.0).roundToInt() / 10.0
         }
 
         val flashcardKnown = cards.count { it.flashcardRating == "known" }
@@ -45,12 +58,12 @@ class BuildAnalysisReportUseCase @Inject constructor(
         val articleSlidesViewed = articles.count { it.visitedCount > 0 }
 
         val weakItemIds = buildList {
-            mcqs.filter { it.isCorrect != true }.forEach { add(it.id) }
+            graded.filter { it.isCorrect != true }.forEach { add(it.id) }
             cards.filter { it.flashcardRating == "needsReview" }.forEach { add(it.id) }
         }
 
         val report = SessionAnalysisReport(
-            schemaVersion = "1.0",
+            schemaVersion = MeloberryVersionInfo.ANALYSIS_SCHEMA_VERSION,
             workspaceId = workspaceId,
             title = title,
             startedAtUtc = formatUtcIso(startedAtEpochMs),
@@ -58,10 +71,10 @@ class BuildAnalysisReportUseCase @Inject constructor(
             totalDurationMs = (completedAtEpochMs - startedAtEpochMs).coerceAtLeast(0L),
             summary = SessionAnalysisSummary(
                 totalSlides = slideEntries.size,
-                mcqTotal = mcqs.size,
-                mcqCorrectFirstTry = mcqCorrectFirstTry,
-                mcqCorrectFinal = mcqCorrectFinal,
-                mcqAccuracyPercent = mcqAccuracyPercent,
+                mcqTotal = graded.size,
+                mcqCorrectFirstTry = gradedCorrectFirstTry,
+                mcqCorrectFinal = gradedCorrectFinal,
+                mcqAccuracyPercent = gradedAccuracyPercent,
                 flashcardTotal = cards.size,
                 flashcardKnown = flashcardKnown,
                 flashcardNeedsReview = flashcardNeedsReview,
@@ -93,7 +106,7 @@ class BuildAnalysisReportUseCase @Inject constructor(
         sb.appendLine()
         sb.appendLine("- **Total Content Slides:** ${report.summary.totalSlides}")
         sb.appendLine(
-            "- **MCQs:** ${report.summary.mcqCorrectFinal} / ${report.summary.mcqTotal} correct ($accuracyStr% | First-try: ${report.summary.mcqCorrectFirstTry})"
+            "- **Graded Questions:** ${report.summary.mcqCorrectFinal} / ${report.summary.mcqTotal} correct ($accuracyStr% | First-try: ${report.summary.mcqCorrectFirstTry})"
         )
         sb.appendLine(
             "- **Flashcards:** ${report.summary.flashcardKnown} known, ${report.summary.flashcardNeedsReview} needs review (of ${report.summary.flashcardTotal})"
@@ -116,8 +129,10 @@ class BuildAnalysisReportUseCase @Inject constructor(
             val secs = String.format(Locale.US, "%.1f", s.timeSpentMs / 1000.0)
             val details = when (s.kind) {
                 "mcq" -> "Correct: ${if (s.isCorrect == true) "Yes" else "No"}, Checks: ${s.checkAttempts ?: 0}, Selected: [${(s.selectedOptionIndices ?: emptyList()).joinToString(",")}]"
+                "fill-blank", "assertion-reason", "spot-error", "diff", "mechanism", "relabel" ->
+                    "Correct: ${if (s.isCorrect == true) "Yes" else "No"}, Checks: ${s.checkAttempts ?: 0}"
                 "flashcard" -> "Flips: ${s.flipCount ?: 0}, Rating: ${s.flashcardRating ?: "unrated"}"
-                else -> "Viewed"
+                else -> if (s.visitedCount > 0) "Viewed" else "Skipped"
             }
             sb.appendLine("| ${s.slideIndex} | `${s.id}` | ${s.kind} | $secs | ${s.visitedCount} | $details |")
         }

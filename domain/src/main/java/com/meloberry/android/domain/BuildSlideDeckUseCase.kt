@@ -1,14 +1,20 @@
 package com.meloberry.android.domain
 
+import com.meloberry.android.core.model.AssertionReasonQuestionModel
 import com.meloberry.android.core.model.ComponentKind
 import com.meloberry.android.core.model.DefaultDispatcher
+import com.meloberry.android.core.model.DifferentiationQuestionModel
+import com.meloberry.android.core.model.FillBlankQuestionModel
 import com.meloberry.android.core.model.FlashcardQuestionModel
 import com.meloberry.android.core.model.LayoutTargetType
 import com.meloberry.android.core.model.McqQuestionModel
+import com.meloberry.android.core.model.MechanismQuestionModel
 import com.meloberry.android.core.model.QuestionModel
 import com.meloberry.android.core.model.QuestionSlideItem
+import com.meloberry.android.core.model.RelabelImageQuestionModel
 import com.meloberry.android.core.model.SlideDeck
 import com.meloberry.android.core.model.SlideUiModel
+import com.meloberry.android.core.model.SpotErrorQuestionModel
 import com.meloberry.android.core.model.StudyWorkspace
 import com.meloberry.android.core.model.WorkspaceKind
 import kotlinx.coroutines.CoroutineDispatcher
@@ -127,8 +133,14 @@ class BuildSlideDeckUseCase @Inject constructor(
         componentOverrides: Map<String, String>
     ): QuestionSlideItem {
         val targetType = when (question) {
-            is McqQuestionModel -> LayoutTargetType.MCQ
             is FlashcardQuestionModel -> LayoutTargetType.FLASHCARD
+            is McqQuestionModel,
+            is FillBlankQuestionModel,
+            is AssertionReasonQuestionModel,
+            is SpotErrorQuestionModel,
+            is DifferentiationQuestionModel,
+            is MechanismQuestionModel,
+            is RelabelImageQuestionModel -> LayoutTargetType.MCQ
         }
         val layout = LayoutBoundsCatalog.merge(
             globalLayouts = globalLayouts,
@@ -139,6 +151,12 @@ class BuildSlideDeckUseCase @Inject constructor(
         return when (question) {
             is McqQuestionModel -> SlideUiModel.McqSlide(question.id, slideIndex, layout, question)
             is FlashcardQuestionModel -> SlideUiModel.FlashcardSlide(question.id, slideIndex, layout, question)
+            is FillBlankQuestionModel -> SlideUiModel.FillBlankSlide(question.id, slideIndex, layout, question)
+            is AssertionReasonQuestionModel -> SlideUiModel.AssertionReasonSlide(question.id, slideIndex, layout, question)
+            is SpotErrorQuestionModel -> SlideUiModel.SpotErrorSlide(question.id, slideIndex, layout, question)
+            is DifferentiationQuestionModel -> SlideUiModel.DifferentiationSlide(question.id, slideIndex, layout, question)
+            is MechanismQuestionModel -> SlideUiModel.MechanismSlide(question.id, slideIndex, layout, question)
+            is RelabelImageQuestionModel -> SlideUiModel.RelabelImageSlide(question.id, slideIndex, layout, question)
         }
     }
 }

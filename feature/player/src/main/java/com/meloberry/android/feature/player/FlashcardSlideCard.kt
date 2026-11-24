@@ -18,6 +18,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -65,14 +66,16 @@ internal fun FlashcardSlideCard(
             }
             .clickable(onClick = onFlip)
     ) {
-        FlashcardFaceContent(
-            faceLabel = if (showingBack) "Back" else "Front",
-            side = if (showingBack) card.back else card.front,
-            layout = layout,
-            showRating = showingBack,
-            currentRating = runtimeState.rating,
-            onRate = onRate
-        )
+        key(showingBack) {
+            FlashcardFaceContent(
+                faceLabel = if (showingBack) "Back" else "Front",
+                side = if (showingBack) card.back else card.front,
+                layout = layout,
+                showRating = showingBack,
+                currentRating = runtimeState.rating,
+                onRate = onRate
+            )
+        }
     }
 }
 
@@ -97,8 +100,8 @@ private fun FlashcardFaceContent(
         contentSpacingDp = 14,
         minHeightDp = 250
     ) {
-        val renderTextAbove = side.position == MediaPosition.ABOVE_IMAGE ||
-            (side.position == MediaPosition.BELOW_IMAGE && layout.defaultTextPosition == MediaPosition.ABOVE_IMAGE)
+        val effectivePosition = if (side.isPositionExplicit) side.position else layout.defaultTextPosition
+        val renderTextAbove = effectivePosition == MediaPosition.ABOVE_IMAGE
         if (renderTextAbove) {
             SideText(side, layout)
             SideImage(side, layout)
@@ -136,7 +139,7 @@ private fun FlashcardFaceContent(
 
         Text(
             text = faceLabel,
-            color = Color(0xFF9E9E9E),
+            color = palette.muted,
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
             modifier = Modifier

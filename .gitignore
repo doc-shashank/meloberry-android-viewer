@@ -1,6 +1,7 @@
 # Android / Gradle / Kotlin & signing
 .gradle/
 .kotlin/
+outdated_stuff/
 build/
 captures/
 .externalNativeBuild/

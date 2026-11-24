@@ -6,7 +6,11 @@ import kotlinx.coroutines.flow.Flow
 
 interface AnalysisRepository {
     fun observeAllRuns(): Flow<List<SavedAnalysisRun>>
-    suspend fun saveCompletedRun(report: SessionAnalysisReport, markdown: String): SavedAnalysisRun
+    suspend fun saveCompletedRun(
+        report: SessionAnalysisReport,
+        markdown: String,
+        existingRunId: String? = null
+    ): SavedAnalysisRun
     suspend fun serializeReportJson(report: SessionAnalysisReport): String
     suspend fun writeExportToUri(uriString: String, content: String): Result<Unit>
     suspend fun deleteRun(runId: String)

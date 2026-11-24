@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckBox
@@ -535,60 +534,6 @@ private fun parseMarkdownBlocks(raw: String): List<MdBlock> {
     return result
 }
 
-private fun findClosingMarker(text: String, marker: String, startIndex: Int): Int {
-    var i = startIndex
-    while (i <= text.length - marker.length) {
-        if (text[i] == '\\') {
-            i += 2
-            continue
-        }
-        if (text[i] == '`') {
-            val codeEnd = text.indexOf('`', i + 1)
-            if (codeEnd > i) {
-                i = codeEnd + 1
-                continue
-            }
-        }
-        if (marker.length == 1 && text[i] == marker[0]) {
-            var run = 0
-            while (i + run < text.length && text[i + run] == marker[0]) run++
-            if (run > 1) {
-                i += run
-                continue
-            }
-            if (marker[0] != '_' || i + 1 == text.length || !text[i + 1].isLetterOrDigit()) {
-                return i
-            }
-        } else if (text.startsWith(marker, i)) {
-            return i
-        }
-        i++
-    }
-    return -1
-}
-
-private fun parseMarkdownLinkAt(text: String, startIndex: Int): Triple<String, String, Int>? {
-    if (startIndex >= text.length || text[startIndex] != '[') return null
-    val closeBracket = text.indexOf(']', startIndex + 1)
-    if (closeBracket <= startIndex + 1 || closeBracket + 1 >= text.length || text[closeBracket + 1] != '(') {
-        return null
-    }
-    var depth = 1
-    var cursor = closeBracket + 2
-    while (cursor < text.length && depth > 0) {
-        when (text[cursor]) {
-            '(' -> depth++
-            ')' -> depth--
-        }
-        if (depth > 0) cursor++
-    }
-    if (depth != 0) return null
-    val label = text.substring(startIndex + 1, closeBracket)
-    val rawTarget = text.substring(closeBracket + 2, cursor).trim()
-    val url = rawTarget.substringBefore(' ').trim('<', '>')
-    return Triple(label, url, cursor + 1)
-}
-
 private fun buildInlineMarkdown(text: String, palette: MeloberryColors): ParsedInlineMarkdown {
     val formulas = LinkedHashMap<String, String>()
     val annotated = buildAnnotatedString {
@@ -629,7 +574,7 @@ private fun AnnotatedString.Builder.appendInlineSegment(
                 }
             }
             text.startsWith("***", i) -> {
-                val end = findClosingMarker(text, "***", i + 3)
+                val end = MarkdownMathParser.findClosingEmphasisMarker(text, "***", i + 3)
                 if (end > i + 3) {
                     withStyle(SpanStyle(fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic)) {
                         appendInlineSegment(text.substring(i + 3, end), palette, formulas)
@@ -642,7 +587,7 @@ private fun AnnotatedString.Builder.appendInlineSegment(
             }
             text.startsWith("**", i) || text.startsWith("__", i) -> {
                 val delim = text.substring(i, i + 2)
-                val end = findClosingMarker(text, delim, i + 2)
+                val end = MarkdownMathParser.findClosingEmphasisMarker(text, delim, i + 2)
                 if (end > i + 2) {
                     withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
                         appendInlineSegment(text.substring(i + 2, end), palette, formulas)
@@ -654,7 +599,7 @@ private fun AnnotatedString.Builder.appendInlineSegment(
                 }
             }
             text.startsWith("~~", i) -> {
-                val end = findClosingMarker(text, "~~", i + 2)
+                val end = MarkdownMathParser.findClosingEmphasisMarker(text, "~~", i + 2)
                 if (end > i + 2) {
                     withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) {
                         appendInlineSegment(text.substring(i + 2, end), palette, formulas)
@@ -666,8 +611,20 @@ private fun AnnotatedString.Builder.appendInlineSegment(
                 }
             }
             text[i] == '`' -> {
-                val end = text.indexOf('`', i + 1)
-                if (end > i + 1) {
+                val codeSpan = MarkdownMathParser.findClosingBackticks(text, i)
+                if (codeSpan != null && codeSpan.second > i + codeSpan.first) {
+                    val (tickCount, closeStart) = codeSpan
+                    val rawCode = text.substring(i + tickCount, closeStart)
+                    val normalizedCode = if (
+                        rawCode.length >= 2 &&
+                        rawCode.startsWith(' ') &&
+                        rawCode.endsWith(' ') &&
+                        rawCode.any { it != ' ' }
+                    ) {
+                        rawCode.substring(1, rawCode.length - 1)
+                    } else {
+                        rawCode
+                    }
                     withStyle(
                         SpanStyle(
                             fontFamily = FontFamily.Monospace,
@@ -676,16 +633,16 @@ private fun AnnotatedString.Builder.appendInlineSegment(
                             fontWeight = FontWeight.SemiBold
                         )
                     ) {
-                        append(text.substring(i + 1, end))
+                        append(normalizedCode)
                     }
-                    i = end + 1
+                    i = closeStart + tickCount
                 } else {
                     append('`')
                     i++
                 }
             }
             text[i] == '[' -> {
-                val link = parseMarkdownLinkAt(text, i)
+                val link = MarkdownMathParser.parseMarkdownLinkAt(text, i)
                 if (link != null) {
                     val (label, url, nextIndex) = link
                     if (MarkdownMathParser.isSafeUrl(url)) {
@@ -713,7 +670,7 @@ private fun AnnotatedString.Builder.appendInlineSegment(
                 }
             }
             text[i] == '*' -> {
-                val end = findClosingMarker(text, "*", i + 1)
+                val end = MarkdownMathParser.findClosingEmphasisMarker(text, "*", i + 1)
                 if (end > i + 1) {
                     withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
                         appendInlineSegment(text.substring(i + 1, end), palette, formulas)
@@ -725,7 +682,7 @@ private fun AnnotatedString.Builder.appendInlineSegment(
                 }
             }
             text[i] == '_' && (i == 0 || !text[i - 1].isLetterOrDigit()) -> {
-                val end = findClosingMarker(text, "_", i + 1)
+                val end = MarkdownMathParser.findClosingEmphasisMarker(text, "_", i + 1)
                 if (end > i + 1) {
                     withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
                         appendInlineSegment(text.substring(i + 1, end), palette, formulas)

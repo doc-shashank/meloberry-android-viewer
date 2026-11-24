@@ -1,11 +1,14 @@
 package com.meloberry.android.core.ui.components
 
+import android.os.Build
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,6 +19,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BrokenImage
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material3.Icon
@@ -38,8 +42,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -50,7 +56,7 @@ import coil.decode.GifDecoder
 import coil.decode.ImageDecoderDecoder
 import coil.decode.SvgDecoder
 import coil.request.ImageRequest
-import android.os.Build
+import com.meloberry.android.core.ui.theme.LocalMeloberryColors
 import java.io.File
 
 private object SharedSvgImageLoader {
@@ -83,14 +89,48 @@ fun MeloberryAssetImage(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val palette = LocalMeloberryColors.current
     val imageLoader = remember(context) { SharedSvgImageLoader.get(context) }
+    val assetFile = remember(filePath) { File(filePath) }
     val model = remember(filePath, context) {
         ImageRequest.Builder(context)
-            .data(File(filePath))
+            .data(assetFile)
             .crossfade(true)
             .build()
     }
+    var hasError by remember(filePath) { mutableStateOf(!assetFile.isFile) }
     var isZoomOpen by remember(filePath) { mutableStateOf(false) }
+
+    if (hasError) {
+        Surface(
+            modifier = modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            color = palette.background,
+            border = BorderStroke(1.dp, palette.border)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.BrokenImage,
+                    contentDescription = contentDescription ?: "Image unavailable",
+                    tint = palette.muted,
+                    modifier = Modifier.size(28.dp)
+                )
+                Text(
+                    text = "Image unavailable",
+                    color = palette.muted,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+        return
+    }
 
     Box(
         modifier = modifier
@@ -104,6 +144,7 @@ fun MeloberryAssetImage(
             imageLoader = imageLoader,
             contentDescription = contentDescription,
             contentScale = ContentScale.Fit,
+            onError = { hasError = true },
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(max = maxHeightDp.dp)
@@ -146,6 +187,17 @@ private fun ZoomableImageDialog(
 ) {
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
+    var containerSize by remember { mutableStateOf(IntSize.Zero) }
+
+    fun clampOffset(candidate: Offset, targetScale: Float): Offset {
+        if (targetScale <= 1f || containerSize == IntSize.Zero) return Offset.Zero
+        val maxX = ((containerSize.width * (targetScale - 1f)) / 2f).coerceAtLeast(0f)
+        val maxY = ((containerSize.height * (targetScale - 1f)) / 2f).coerceAtLeast(0f)
+        return Offset(
+            x = candidate.x.coerceIn(-maxX, maxX),
+            y = candidate.y.coerceIn(-maxY, maxY)
+        )
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -160,11 +212,15 @@ private fun ZoomableImageDialog(
                 modifier = Modifier
                     .fillMaxSize()
                     .clipToBounds()
+                    .onSizeChanged { newSize ->
+                        containerSize = newSize
+                        offset = clampOffset(offset, scale)
+                    }
                     .pointerInput(Unit) {
                         detectTransformGestures { _, pan, zoom, _ ->
                             val nextScale = (scale * zoom).coerceIn(1f, 5f)
                             offset = if (nextScale > 1f) {
-                                Offset(offset.x + pan.x, offset.y + pan.y)
+                                clampOffset(Offset(offset.x + pan.x, offset.y + pan.y), nextScale)
                             } else {
                                 Offset.Zero
                             }
@@ -173,12 +229,20 @@ private fun ZoomableImageDialog(
                     }
                     .pointerInput(Unit) {
                         detectTapGestures(
-                            onDoubleTap = {
+                            onDoubleTap = { tapOffset ->
                                 if (scale > 1.05f) {
                                     scale = 1f
                                     offset = Offset.Zero
                                 } else {
-                                    scale = 2.5f
+                                    val targetScale = 2.5f
+                                    val centerX = containerSize.width / 2f
+                                    val centerY = containerSize.height / 2f
+                                    val reanchored = Offset(
+                                        x = (centerX - tapOffset.x) * (targetScale - 1f),
+                                        y = (centerY - tapOffset.y) * (targetScale - 1f)
+                                    )
+                                    scale = targetScale
+                                    offset = clampOffset(reanchored, targetScale)
                                 }
                             }
                         )

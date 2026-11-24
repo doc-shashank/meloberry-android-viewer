@@ -11,6 +11,7 @@ import com.meloberry.android.core.model.LayoutTargetType
 import com.meloberry.android.core.model.McqOptionModel
 import com.meloberry.android.core.model.McqQuestionModel
 import com.meloberry.android.core.model.MediaPosition
+import com.meloberry.android.core.model.MeloberryVersionInfo
 import com.meloberry.android.core.model.SavedAnalysisRun
 import com.meloberry.android.core.model.SlideAnalysisEntry
 import com.meloberry.android.core.model.SlideUiModel
@@ -255,19 +256,33 @@ class DomainUseCasesTest {
     }
 
     @Test
-    fun buildAnalysisReportUseCase_defaultsAccuracyTo100WhenZeroMcqs_andFlagsWeakItems() = runTest {
+    fun buildAnalysisReportUseCase_reportsSkippedArticles_andAggregateHistoryAveragesGradedRunsOnly() = runTest {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val reportUseCase = BuildAnalysisReportUseCase(dispatcher)
         val aggUseCase = AggregateAnalysisHistoryUseCase(dispatcher)
 
-        val noMcqResult = reportUseCase(
+        val ungradedResult = reportUseCase(
             workspaceId = "Set_Cards",
-            title = "Flashcards",
+            title = "Flashcards & Articles",
             startedAtEpochMs = 1_000L,
             completedAtEpochMs = 6_000L,
             slideEntries = listOf(
                 SlideAnalysisEntry(
                     slideIndex = 1,
+                    id = "Art_Visited",
+                    kind = "article",
+                    timeSpentMs = 2_000L,
+                    visitedCount = 1
+                ),
+                SlideAnalysisEntry(
+                    slideIndex = 2,
+                    id = "Art_Skipped",
+                    kind = "article",
+                    timeSpentMs = 0L,
+                    visitedCount = 0
+                ),
+                SlideAnalysisEntry(
+                    slideIndex = 3,
                     id = "Q_Card1",
                     kind = "flashcard",
                     timeSpentMs = 4_000L,
@@ -278,21 +293,58 @@ class DomainUseCasesTest {
             )
         )
 
-        assertEquals("1.0", noMcqResult.report.schemaVersion)
-        assertEquals(100.0, noMcqResult.report.summary.mcqAccuracyPercent, 0.001)
-        assertEquals(listOf("Q_Card1"), noMcqResult.report.weakItemIds)
-        assertTrue(noMcqResult.markdown.contains("# Meloberry Session Analysis — Set_Cards"))
-        assertTrue(noMcqResult.markdown.contains("## Weak / Review Items"))
+        assertEquals("1.0", ungradedResult.report.schemaVersion)
+        assertEquals(100.0, ungradedResult.report.summary.mcqAccuracyPercent, 0.001)
+        assertEquals(1, ungradedResult.report.summary.articleSlidesViewed)
+        assertEquals(listOf("Q_Card1"), ungradedResult.report.weakItemIds)
+        assertTrue(ungradedResult.markdown.contains("# Meloberry Session Analysis — Set_Cards"))
+        assertTrue(ungradedResult.markdown.contains("## Weak / Review Items"))
+        assertTrue(ungradedResult.markdown.contains("| 1 | `Art_Visited` | article | 2.0 | 1 | Viewed |"))
+        assertTrue(ungradedResult.markdown.contains("| 2 | `Art_Skipped` | article | 0.0 | 0 | Skipped |"))
 
-        val agg = aggUseCase(
+        // Only ungraded runs -> averageAccuracyPercent must be 0.0 (not inflated to 100.0)
+        val aggUngradedOnly = aggUseCase(
             listOf(
-                SavedAnalysisRun("run1", noMcqResult.report, noMcqResult.markdown, 6_000L),
-                SavedAnalysisRun("run2", noMcqResult.report, noMcqResult.markdown, 12_000L)
+                SavedAnalysisRun("run1", ungradedResult.report, ungradedResult.markdown, 6_000L),
+                SavedAnalysisRun("run2", ungradedResult.report, ungradedResult.markdown, 12_000L)
             )
         )
-        assertEquals(2, agg.totalRuns)
-        assertEquals(100.0, agg.averageAccuracyPercent, 0.001)
-        assertEquals(1, agg.recurringWeakItems.size)
-        assertEquals(2, agg.recurringWeakItems[0].flaggedCount)
+        assertEquals(2, aggUngradedOnly.totalRuns)
+        assertEquals(0, aggUngradedOnly.gradedRunCount)
+        assertEquals(0.0, aggUngradedOnly.averageAccuracyPercent, 0.001)
+        assertEquals(1, aggUngradedOnly.recurringWeakItems.size)
+        assertEquals(2, aggUngradedOnly.recurringWeakItems[0].flaggedCount)
+
+        // Mixed graded + ungraded runs -> average only the graded run (50.0%, not 75.0%)
+        val gradedResult = reportUseCase(
+            workspaceId = "Set_Quiz",
+            title = "Quiz",
+            startedAtEpochMs = 1_000L,
+            completedAtEpochMs = 11_000L,
+            slideEntries = listOf(
+                SlideAnalysisEntry(1, "Q_1", "mcq", 3_000L, 1, 1, listOf(1), listOf(1), true, true),
+                SlideAnalysisEntry(2, "Q_2", "mcq", 4_000L, 1, 1, listOf(2), listOf(1), false, false)
+            )
+        )
+        val aggMixed = aggUseCase(
+            listOf(
+                SavedAnalysisRun("run_ungraded", ungradedResult.report, ungradedResult.markdown, 6_000L),
+                SavedAnalysisRun("run_graded", gradedResult.report, gradedResult.markdown, 12_000L)
+            )
+        )
+        assertEquals(2, aggMixed.totalRuns)
+        assertEquals(1, aggMixed.gradedRunCount)
+        assertEquals(50.0, aggMixed.averageAccuracyPercent, 0.001)
+    }
+
+    @Test
+    fun meloberryVersionInfo_matchesSingleSourceOfTruthVersioning() {
+        assertEquals("2.0.0", MeloberryVersionInfo.VERSION_NAME)
+        assertEquals(20000, MeloberryVersionInfo.VERSION_CODE)
+        assertEquals("2.0", MeloberryVersionInfo.TARGET_PACKAGE_VERSION)
+        assertEquals("1.0", MeloberryVersionInfo.LEGACY_PACKAGE_VERSION)
+        assertEquals("1.0", MeloberryVersionInfo.ANALYSIS_SCHEMA_VERSION)
+        assertTrue(MeloberryVersionInfo.LEGACY_PACKAGE_VERSION in MeloberryVersionInfo.SUPPORTED_PACKAGE_VERSIONS)
+        assertTrue(MeloberryVersionInfo.TARGET_PACKAGE_VERSION in MeloberryVersionInfo.SUPPORTED_PACKAGE_VERSIONS)
     }
 }

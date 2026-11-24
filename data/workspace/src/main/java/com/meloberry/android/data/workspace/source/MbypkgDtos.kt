@@ -1,10 +1,11 @@
 package com.meloberry.android.data.workspace.source
 
+import com.meloberry.android.core.model.MeloberryVersionInfo
 import kotlinx.serialization.Serializable
 
 @Serializable
 internal data class PackageManifestDto(
-    val packageVersion: String = "1.0",
+    val packageVersion: String = MeloberryVersionInfo.LEGACY_PACKAGE_VERSION,
     val kind: String = "",
     val id: String = "",
     val exportedAtUtc: String = "",
@@ -29,7 +30,8 @@ internal data class ComponentPackageDto(
     val quiz: QuizPackageDto? = null,
     val articleBlocks: List<ArticleBlockPackageDto> = emptyList(),
     val layoutOverrides: Map<String, String>? = null,
-    val title: String? = null
+    val title: String? = null,
+    val refKey: String? = null
 )
 
 @Serializable
@@ -38,7 +40,13 @@ internal data class ArticleBlockPackageDto(
     val index: Int = 1,
     val kind: String = "",
     val textContent: String? = null,
-    val imagePath: String? = null
+    val imagePath: String? = null,
+    val caption: String? = null,
+    val alt: String? = null,
+    val calloutTone: String? = null,
+    val calloutTitle: String? = null,
+    val refKey: String? = null,
+    val payloadJson: String? = null
 )
 
 @Serializable
@@ -63,7 +71,9 @@ internal data class QuestionPackageDto(
     val back: SidePackageDto? = null,
     val layoutOverrides: Map<String, String>? = null,
     val promptImagePath: String? = null,
-    val explanation: String? = null
+    val explanation: String? = null,
+    val refKey: String? = null,
+    val payloadJson: String? = null
 )
 
 @Serializable
@@ -78,5 +88,6 @@ internal data class OptionPackageDto(
 internal data class SidePackageDto(
     val text: String? = null,
     val imagePath: String? = null,
-    val position: String = "TextBelowImage"
+    val position: String = "TextBelowImage",
+    val isPositionExplicit: Boolean = false
 )

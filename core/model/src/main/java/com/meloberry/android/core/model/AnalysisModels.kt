@@ -62,7 +62,8 @@ data class AggregatedWorkspaceStats(
     val totalRuns: Int,
     val averageAccuracyPercent: Double,
     val averageDurationSec: Double,
-    val recurringWeakItems: List<RecurringWeakItem>
+    val recurringWeakItems: List<RecurringWeakItem>,
+    val gradedRunCount: Int = totalRuns
 )
 
 data class UserMessage(

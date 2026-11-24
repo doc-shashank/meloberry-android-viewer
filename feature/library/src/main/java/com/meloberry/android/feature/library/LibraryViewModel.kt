@@ -54,17 +54,20 @@ class LibraryViewModel @Inject constructor(
     }
 
     fun importPackage(uriString: String) {
+        if (!isImporting.compareAndSet(expect = false, update = true)) return
         viewModelScope.launch {
-            isImporting.value = true
-            workspaceRepository.importPackageFromUri(uriString)
-                .onSuccess { summary ->
-                    userMessages.update { it.appendMessage("Imported ${summary.id}") }
-                    pendingOpenWorkspaceId.value = summary.id
-                }
-                .onFailure { err ->
-                    userMessages.update { it.appendMessage(err.message ?: "Failed to import .mbypkg package.") }
-                }
-            isImporting.value = false
+            try {
+                workspaceRepository.importPackageFromUri(uriString)
+                    .onSuccess { summary ->
+                        userMessages.update { it.appendMessage("Imported ${summary.id}") }
+                        pendingOpenWorkspaceId.value = summary.id
+                    }
+                    .onFailure { err ->
+                        userMessages.update { it.appendMessage(err.message ?: "Failed to import .mbypkg package.") }
+                    }
+            } finally {
+                isImporting.value = false
+            }
         }
     }
 

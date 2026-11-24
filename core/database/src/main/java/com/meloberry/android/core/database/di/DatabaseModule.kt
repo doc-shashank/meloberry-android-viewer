@@ -32,7 +32,7 @@ object DatabaseModule {
         MeloberryDatabase::class.java,
         "meloberry_ssot.db"
     )
-        .fallbackToDestructiveMigration()
+        .addMigrations(*MeloberryDatabase.ALL_MIGRATIONS)
         .build()
 
     @Provides

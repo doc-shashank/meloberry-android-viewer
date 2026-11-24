@@ -1,6 +1,7 @@
 package com.meloberry.android.core.ui.markdown
 
 import android.content.Context
+import android.util.LruCache
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
@@ -12,6 +13,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,34 +31,60 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.meloberry.android.core.model.ContentAlign
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import ru.noties.jlatexmath.JLatexMathAndroid
 import ru.noties.jlatexmath.JLatexMathDrawable
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.roundToInt
 
-private object LatexEngineInit {
+private data class LatexCacheKey(
+    val tex: String,
+    val textSizePxRounded: Int,
+    val colorArgb: Int
+)
+
+private object LatexDrawableCache {
     private val initialized = AtomicBoolean(false)
+    private val cache = LruCache<LatexCacheKey, JLatexMathDrawable>(128)
 
-    fun ensureInitialized(context: Context) {
+    fun getCached(key: LatexCacheKey): JLatexMathDrawable? = synchronized(cache) {
+        cache.get(key)
+    }
+
+    suspend fun getOrBuild(
+        context: Context,
+        tex: String,
+        textSizePx: Float,
+        colorArgb: Int
+    ): JLatexMathDrawable? {
+        val key = LatexCacheKey(tex, textSizePx.roundToInt(), colorArgb)
+        getCached(key)?.let { return it }
+
+        return withContext(Dispatchers.Default) {
+            getCached(key)?.let { return@withContext it }
+            ensureInitialized(context)
+            val built = runCatching {
+                JLatexMathDrawable.builder(tex)
+                    .textSize(textSizePx)
+                    .color(colorArgb)
+                    .padding(4)
+                    .build()
+            }.getOrNull()
+            if (built != null) {
+                synchronized(cache) {
+                    cache.put(key, built)
+                }
+            }
+            built
+        }
+    }
+
+    private fun ensureInitialized(context: Context) {
         if (initialized.compareAndSet(false, true)) {
             runCatching { JLatexMathAndroid.init(context.applicationContext) }
         }
     }
-}
-
-private fun buildLatexDrawable(
-    context: Context,
-    tex: String,
-    textSizePx: Float,
-    colorArgb: Int
-): JLatexMathDrawable? {
-    LatexEngineInit.ensureInitialized(context)
-    return runCatching {
-        JLatexMathDrawable.builder(tex)
-            .textSize(textSizePx)
-            .color(colorArgb)
-            .padding(4)
-            .build()
-    }.getOrNull()
 }
 
 @Composable
@@ -71,9 +100,14 @@ internal fun DisplayMathBlock(
     val formulaSp = (baseFontSizeSp * 1.15f).sp
     val textSizePx = with(density) { formulaSp.toPx() }
     val colorArgb = color.toArgb()
-
-    val drawable = remember(context, tex, textSizePx, colorArgb) {
-        buildLatexDrawable(context, tex, textSizePx, colorArgb)
+    val cacheKey = remember(tex, textSizePx, colorArgb) {
+        LatexCacheKey(tex, textSizePx.roundToInt(), colorArgb)
+    }
+    val initialCached = remember(cacheKey) { LatexDrawableCache.getCached(cacheKey) }
+    val drawable by produceState(initialValue = initialCached, key1 = context, key2 = cacheKey) {
+        if (value == null) {
+            value = LatexDrawableCache.getOrBuild(context, tex, textSizePx, colorArgb)
+        }
     }
 
     val boxAlignment = when (contentAlign) {
@@ -89,9 +123,10 @@ internal fun DisplayMathBlock(
             .horizontalScroll(rememberScrollState()),
         contentAlignment = boxAlignment
     ) {
-        if (drawable != null) {
-            val widthDp = with(density) { drawable.intrinsicWidth.coerceAtLeast(1).toDp() }
-            val heightDp = with(density) { drawable.intrinsicHeight.coerceAtLeast(1).toDp() }
+        val resolvedDrawable = drawable
+        if (resolvedDrawable != null) {
+            val widthDp = with(density) { resolvedDrawable.intrinsicWidth.coerceAtLeast(1).toDp() }
+            val heightDp = with(density) { resolvedDrawable.intrinsicHeight.coerceAtLeast(1).toDp() }
             Canvas(
                 modifier = Modifier
                     .width(widthDp)
@@ -99,10 +134,17 @@ internal fun DisplayMathBlock(
             ) {
                 drawIntoCanvas { canvas ->
                     val native = canvas.nativeCanvas
-                    native.save()
-                    drawable.setBounds(0, 0, size.width.toInt().coerceAtLeast(1), size.height.toInt().coerceAtLeast(1))
-                    drawable.draw(native)
-                    native.restore()
+                    synchronized(resolvedDrawable) {
+                        native.save()
+                        resolvedDrawable.setBounds(
+                            0,
+                            0,
+                            size.width.toInt().coerceAtLeast(1),
+                            size.height.toInt().coerceAtLeast(1)
+                        )
+                        resolvedDrawable.draw(native)
+                        native.restore()
+                    }
                 }
             }
         } else {
@@ -131,11 +173,33 @@ internal fun rememberInlineMathContent(
     val context = LocalContext.current
     val density = LocalDensity.current
     val textSizePx = with(density) { fontSizeSp.sp.toPx() }
+    val textSizeRounded = textSizePx.roundToInt()
     val colorArgb = color.toArgb()
 
-    return remember(context, formulas, textSizePx, colorArgb) {
+    val initialMap = remember(formulas, textSizeRounded, colorArgb) {
         formulas.mapValues { (_, tex) ->
-            val drawable = buildLatexDrawable(context, tex, textSizePx, colorArgb)
+            LatexDrawableCache.getCached(LatexCacheKey(tex, textSizeRounded, colorArgb))
+        }
+    }
+
+    val resolvedDrawables by produceState(
+        initialValue = initialMap,
+        key1 = context,
+        key2 = formulas,
+        key3 = textSizeRounded to colorArgb
+    ) {
+        if (value.values.any { it == null }) {
+            val loaded = LinkedHashMap<String, JLatexMathDrawable?>(formulas.size)
+            for ((id, tex) in formulas) {
+                loaded[id] = value[id] ?: LatexDrawableCache.getOrBuild(context, tex, textSizePx, colorArgb)
+            }
+            value = loaded
+        }
+    }
+
+    return remember(formulas, resolvedDrawables, textSizeRounded, colorArgb, fontSizeSp) {
+        formulas.mapValues { (id, tex) ->
+            val drawable = resolvedDrawables[id]
             if (drawable != null) {
                 val wSp = with(density) { drawable.intrinsicWidth.coerceAtLeast(1).toSp() }
                 val hSp = with(density) { drawable.intrinsicHeight.coerceAtLeast(1).toSp() }
@@ -146,18 +210,24 @@ internal fun rememberInlineMathContent(
                         placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter
                     )
                 ) {
-                    Canvas(modifier = Modifier.width(with(density) { wSp.toDp() }).height(with(density) { hSp.toDp() })) {
+                    Canvas(
+                        modifier = Modifier
+                            .width(with(density) { wSp.toDp() })
+                            .height(with(density) { hSp.toDp() })
+                    ) {
                         drawIntoCanvas { canvas ->
                             val native = canvas.nativeCanvas
-                            native.save()
-                            drawable.setBounds(
-                                0,
-                                0,
-                                size.width.toInt().coerceAtLeast(1),
-                                size.height.toInt().coerceAtLeast(1)
-                            )
-                            drawable.draw(native)
-                            native.restore()
+                            synchronized(drawable) {
+                                native.save()
+                                drawable.setBounds(
+                                    0,
+                                    0,
+                                    size.width.toInt().coerceAtLeast(1),
+                                    size.height.toInt().coerceAtLeast(1)
+                                )
+                                drawable.draw(native)
+                                native.restore()
+                            }
                         }
                     }
                 }

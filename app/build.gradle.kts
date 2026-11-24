@@ -13,8 +13,8 @@ android {
     defaultConfig {
         applicationId = "com.meloberry.android"
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = rootProject.extra["meloberryVersionCode"] as Int
+        versionName = rootProject.extra["meloberryVersionName"] as String
     }
 
     buildTypes {
@@ -31,7 +31,7 @@ android {
     buildFeatures {
         compose = true
         aidl = false
-        buildConfig = false
+        buildConfig = true
         shaders = false
     }
 

@@ -20,9 +20,74 @@ data class FlashcardSlideRuntimeState(
     val rating: String? = null
 )
 
+data class FillBlankSlideRuntimeState(
+    val inputsBySlot: Map<Int, String> = emptyMap(),
+    val overriddenSlotIndices: Set<Int> = emptySet(),
+    val isChecked: Boolean = false,
+    val checkAttempts: Int = 0,
+    val firstTryCorrect: Boolean? = null,
+    val isCorrect: Boolean? = null,
+    val overriddenCorrect: Boolean = false,
+    val anyFuzzy: Boolean = false
+)
+
+data class AssertionReasonSlideRuntimeState(
+    val selectedCode: String? = null,
+    val isChecked: Boolean = false,
+    val checkAttempts: Int = 0,
+    val firstTryCorrect: Boolean? = null,
+    val isCorrect: Boolean? = null
+)
+
+data class SpotErrorSlideRuntimeState(
+    val selectedSpans: Set<Int> = emptySet(),
+    val pickedNoError: Boolean = false,
+    val fixesBySpan: Map<Int, String> = emptyMap(),
+    val isChecked: Boolean = false,
+    val checkAttempts: Int = 0,
+    val firstTryCorrect: Boolean? = null,
+    val isCorrect: Boolean? = null
+)
+
+data class DifferentiationSlideRuntimeState(
+    val fillInputsByCell: Map<String, String> = emptyMap(),
+    val selectedErrorCells: Set<String> = emptySet(),
+    val pickedNoError: Boolean = false,
+    val rearrangeRows: List<List<String>> = emptyList(),
+    val isChecked: Boolean = false,
+    val checkAttempts: Int = 0,
+    val firstTryCorrect: Boolean? = null,
+    val isCorrect: Boolean? = null,
+    val overriddenCorrect: Boolean = false,
+    val anyFuzzy: Boolean = false
+)
+
+data class MechanismSlideRuntimeState(
+    val bankStepIds: List<Int> = emptyList(),
+    val placedStepIds: List<Int> = emptyList(),
+    val isChecked: Boolean = false,
+    val checkAttempts: Int = 0,
+    val firstTryCorrect: Boolean? = null,
+    val isCorrect: Boolean? = null
+)
+
+data class RelabelImageSlideRuntimeState(
+    val revealedBoxIndices: Set<Int> = emptySet(),
+    val assignedLabelsByBox: Map<Int, String> = emptyMap(),
+    val recallInputsByBox: Map<Int, String> = emptyMap(),
+    val rating: String? = null,
+    val isChecked: Boolean = false,
+    val checkAttempts: Int = 0,
+    val firstTryCorrect: Boolean? = null,
+    val isCorrect: Boolean? = null,
+    val overriddenCorrect: Boolean = false,
+    val anyFuzzy: Boolean = false
+)
+
 data class SessionPlayerUiState(
     val isLoading: Boolean = true,
     val notFound: Boolean = false,
+    val loadError: String? = null,
     val workspaceId: String = "",
     val title: String = "",
     val description: String = "",
@@ -38,6 +103,12 @@ data class SessionPlayerUiState(
     val currentMcqScore: Int = 0,
     val mcqStates: Map<String, McqSlideRuntimeState> = emptyMap(),
     val flashcardStates: Map<String, FlashcardSlideRuntimeState> = emptyMap(),
+    val fillBlankStates: Map<String, FillBlankSlideRuntimeState> = emptyMap(),
+    val assertionReasonStates: Map<String, AssertionReasonSlideRuntimeState> = emptyMap(),
+    val spotErrorStates: Map<String, SpotErrorSlideRuntimeState> = emptyMap(),
+    val differentiationStates: Map<String, DifferentiationSlideRuntimeState> = emptyMap(),
+    val mechanismStates: Map<String, MechanismSlideRuntimeState> = emptyMap(),
+    val relabelImageStates: Map<String, RelabelImageSlideRuntimeState> = emptyMap(),
     val completedReport: SessionAnalysisReport? = null,
     val completedMarkdown: String? = null,
     val pendingExport: PendingExportPayload? = null,

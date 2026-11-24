@@ -9,6 +9,10 @@ android {
     namespace = "com.meloberry.android.core.database"
 }
 
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 dependencies {
     api(project(":core:model"))
 

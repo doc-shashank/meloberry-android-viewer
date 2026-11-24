@@ -1,18 +1,21 @@
 package com.meloberry.android.data.workspace.repository
 
+import androidx.room.withTransaction
+import com.meloberry.android.core.database.MeloberryDatabase
 import com.meloberry.android.core.database.dao.AnalysisRunDao
 import com.meloberry.android.core.database.dao.WorkspaceDao
 import com.meloberry.android.core.database.datastore.PreferencesDataStoreSource
 import com.meloberry.android.core.database.entity.WorkspaceEntity
 import com.meloberry.android.core.model.ApplicationScope
 import com.meloberry.android.core.model.IoDispatcher
-import com.meloberry.android.core.model.StudyWorkspace
 import com.meloberry.android.core.model.WorkspaceKind
 import com.meloberry.android.core.model.WorkspaceSummary
+import com.meloberry.android.data.workspace.WorkspaceLoadResult
 import com.meloberry.android.data.workspace.WorkspaceRepository
 import com.meloberry.android.data.workspace.source.BundledSampleDataSource
 import com.meloberry.android.data.workspace.source.DocumentStreamDataSource
 import com.meloberry.android.data.workspace.source.MbypkgArchiveDataSource
+import com.meloberry.android.data.workspace.source.StagedWorkspaceBundle
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -39,6 +42,7 @@ internal abstract class WorkspaceDataModule {
 
 @Singleton
 internal class DefaultWorkspaceRepository @Inject constructor(
+    private val database: MeloberryDatabase,
     private val workspaceDao: WorkspaceDao,
     private val analysisRunDao: AnalysisRunDao,
     private val preferencesSource: PreferencesDataStoreSource,
@@ -55,8 +59,22 @@ internal class DefaultWorkspaceRepository @Inject constructor(
         .map { entities -> entities.map { it.toSummary() } }
         .flowOn(ioDispatcher)
 
-    override fun observeWorkspace(id: String): Flow<StudyWorkspace?> = workspaceDao.observeById(id)
-        .map { entity -> entity?.let { archiveDataSource.deserializeEntity(it) } }
+    override fun observeWorkspace(id: String): Flow<WorkspaceLoadResult> = workspaceDao.observeById(id)
+        .map { entity ->
+            if (entity == null) {
+                WorkspaceLoadResult.NotFound
+            } else {
+                runCatching { archiveDataSource.deserializeEntity(entity) }.fold(
+                    onSuccess = { WorkspaceLoadResult.Loaded(it) },
+                    onFailure = { err ->
+                        WorkspaceLoadResult.Corrupt(
+                            workspaceId = entity.id,
+                            message = err.message ?: "Stored workspace data is corrupted."
+                        )
+                    }
+                )
+            }
+        }
         .flowOn(ioDispatcher)
 
     override suspend fun importPackageFromUri(uriString: String): Result<WorkspaceSummary> =
@@ -66,11 +84,12 @@ internal class DefaultWorkspaceRepository @Inject constructor(
                     val stream = documentStreamDataSource.openInputStream(uriString)
                         ?: error("Unable to open selected package.")
                     stream.use { input ->
-                        val extracted = archiveDataSource.extractAndParse(input) { workspaceId ->
+                        archiveDataSource.stageAndValidate(input) { workspaceId ->
                             documentStreamDataSource.getWorkspaceDir(workspaceId)
+                        }.use { staged ->
+                            commitStagedImport(staged)
+                            staged.entity.toSummary()
                         }
-                        workspaceDao.upsert(extracted.entity)
-                        extracted.entity.toSummary()
                     }
                 }
             }
@@ -82,10 +101,11 @@ internal class DefaultWorkspaceRepository @Inject constructor(
                 val alreadySeeded = preferencesSource.sampleSeeded.first()
                 if (!alreadySeeded && workspaceDao.count() == 0) {
                     val bytes = bundledSampleDataSource.buildSampleMbypkgBytes()
-                    val extracted = archiveDataSource.extractAndParse(ByteArrayInputStream(bytes)) { id ->
+                    archiveDataSource.stageAndValidate(ByteArrayInputStream(bytes)) { id ->
                         documentStreamDataSource.getWorkspaceDir(id)
+                    }.use { staged ->
+                        commitStagedImport(staged)
                     }
-                    workspaceDao.upsert(extracted.entity)
                     preferencesSource.setSampleSeeded(true)
                 }
             }
@@ -95,8 +115,10 @@ internal class DefaultWorkspaceRepository @Inject constructor(
     override suspend fun deleteWorkspace(id: String) {
         externalScope.async(ioDispatcher) {
             writeMutex.withLock {
-                workspaceDao.deleteById(id)
-                analysisRunDao.deleteByWorkspaceId(id)
+                database.withTransaction {
+                    workspaceDao.deleteById(id)
+                    analysisRunDao.deleteByWorkspaceId(id)
+                }
                 val dir = documentStreamDataSource.getWorkspaceDir(id)
                 if (dir.exists()) {
                     dir.deleteRecursively()
@@ -104,6 +126,23 @@ internal class DefaultWorkspaceRepository @Inject constructor(
                 documentStreamDataSource.deleteWorkspaceReports(id)
             }
         }.await()
+    }
+
+    private suspend fun commitStagedImport(staged: StagedWorkspaceBundle) {
+        val previousEntity = workspaceDao.getById(staged.entity.id)
+        workspaceDao.upsert(staged.entity)
+        try {
+            staged.commitAssets()
+        } catch (commitError: Throwable) {
+            runCatching {
+                if (previousEntity != null) {
+                    workspaceDao.upsert(previousEntity)
+                } else {
+                    workspaceDao.deleteById(staged.entity.id)
+                }
+            }
+            throw commitError
+        }
     }
 
     private fun WorkspaceEntity.toSummary(): WorkspaceSummary = WorkspaceSummary(

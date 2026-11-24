@@ -1,12 +1,17 @@
 package com.meloberry.android.core.ui.components
 
+import android.app.Activity
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.contract.ActivityResultContract
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,12 +39,32 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.meloberry.android.core.model.PendingExportPayload
 import com.meloberry.android.core.model.UserMessage
 import com.meloberry.android.core.ui.theme.LocalMeloberryColors
+import java.io.File
+import java.util.UUID
+
+private const val INLINE_SAVEABLE_EXPORT_LIMIT = 200_000
+
+private class CreateDocumentWithMimeContract : ActivityResultContract<Pair<String, String>, Uri?>() {
+    override fun createIntent(context: Context, input: Pair<String, String>): Intent {
+        val (suggestedFileName, mimeType) = input
+        val effectiveMime = mimeType.ifBlank { "text/plain" }
+        return Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = effectiveMime
+            putExtra(Intent.EXTRA_TITLE, suggestedFileName)
+        }
+    }
+
+    override fun parseResult(resultCode: Int, intent: Intent?): Uri? =
+        if (resultCode == Activity.RESULT_OK) intent?.data else null
+}
 
 @Composable
 fun MeloberrySnackbarEffect(
@@ -62,17 +87,28 @@ fun PendingDocumentExportEffect(
     onExportConsumed: () -> Unit,
     onSaveExportToUri: (uriString: String, content: String) -> Unit
 ) {
-    var pendingContent by rememberSaveable { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    var pendingInlineContent by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingCacheFilePath by rememberSaveable { mutableStateOf<String?>(null) }
     var awaitingDocumentResult by rememberSaveable { mutableStateOf(false) }
     val latestExport by rememberUpdatedState(pendingExport)
 
     val createDocumentLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("*/*")
+        contract = remember { CreateDocumentWithMimeContract() }
     ) { uri ->
-        val contentToWrite = pendingContent ?: latestExport?.content
-        pendingContent = null
+        val cachedFile = pendingCacheFilePath?.let { File(it) }
+        val contentToWrite = pendingInlineContent
+            ?: cachedFile?.takeIf { it.isFile }?.let { file ->
+                runCatching { file.readText(Charsets.UTF_8) }.getOrNull()
+            }
+            ?: latestExport?.content
+
+        cachedFile?.let { runCatching { it.delete() } }
+        pendingInlineContent = null
+        pendingCacheFilePath = null
         awaitingDocumentResult = false
         onExportConsumed()
+
         if (uri != null && contentToWrite != null) {
             onSaveExportToUri(uri.toString(), contentToWrite)
         }
@@ -81,8 +117,24 @@ fun PendingDocumentExportEffect(
     LaunchedEffect(pendingExport, awaitingDocumentResult) {
         if (pendingExport != null && !awaitingDocumentResult) {
             awaitingDocumentResult = true
-            pendingContent = if (pendingExport.content.length <= 200_000) pendingExport.content else null
-            createDocumentLauncher.launch(pendingExport.suggestedFileName)
+            if (pendingExport.content.length <= INLINE_SAVEABLE_EXPORT_LIMIT) {
+                pendingInlineContent = pendingExport.content
+                pendingCacheFilePath = null
+            } else {
+                val stagedFile = File(context.cacheDir, "export_stage_${UUID.randomUUID()}.tmp")
+                val stagedOk = runCatching {
+                    stagedFile.writeText(pendingExport.content, Charsets.UTF_8)
+                    true
+                }.getOrDefault(false)
+                pendingInlineContent = null
+                pendingCacheFilePath = if (stagedOk) stagedFile.absolutePath else null
+            }
+            val effectiveMime = when (pendingExport.mimeType.lowercase()) {
+                "application/json" -> "application/json"
+                "text/markdown", "text/plain" -> "text/plain"
+                else -> pendingExport.mimeType.ifBlank { "text/plain" }
+            }
+            createDocumentLauncher.launch(pendingExport.suggestedFileName to effectiveMime)
         }
     }
 }
@@ -101,6 +153,7 @@ fun MeloberryPageScaffold(
     userMessages: List<UserMessage>,
     onMessageShown: (Long) -> Unit,
     modifier: Modifier = Modifier,
+    headerTrailing: @Composable () -> Unit = {},
     floatingActionButton: @Composable () -> Unit = {},
     content: @Composable BoxScope.() -> Unit
 ) {
@@ -131,12 +184,20 @@ fun MeloberryPageScaffold(
                     .widthIn(max = 840.dp)
                     .fillMaxSize()
             ) {
-                Text(
-                    text = title,
-                    color = palette.accent,
-                    fontSize = 26.sp,
-                    fontWeight = FontWeight.ExtraBold
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = title,
+                        color = palette.accent,
+                        fontSize = 26.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    headerTrailing()
+                }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = subtitle,

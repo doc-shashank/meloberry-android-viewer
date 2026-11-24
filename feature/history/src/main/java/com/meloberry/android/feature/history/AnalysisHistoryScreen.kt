@@ -24,6 +24,9 @@ import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -32,9 +35,13 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -86,7 +93,7 @@ fun AnalysisHistoryRoute(
     LaunchedEffect(pendingShare) {
         if (pendingShare != null) {
             val intent = Intent(Intent.ACTION_SEND).apply {
-                type = "text/markdown"
+                type = "text/plain"
                 putExtra(Intent.EXTRA_SUBJECT, "Meloberry Session Analysis")
                 putExtra(Intent.EXTRA_TEXT, pendingShare)
             }
@@ -123,6 +130,35 @@ fun AnalysisHistoryScreen(
     modifier: Modifier = Modifier
 ) {
     val palette = LocalMeloberryColors.current
+    var pendingDeleteRun by remember { mutableStateOf<SavedAnalysisRun?>(null) }
+
+    pendingDeleteRun?.let { targetRun ->
+        AlertDialog(
+            onDismissRequest = { pendingDeleteRun = null },
+            title = { Text("Delete analysis run?") },
+            text = {
+                Text(
+                    "This will permanently delete the saved analysis run for \"${targetRun.report.title.ifBlank { targetRun.report.workspaceId }}\" and its local report files."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pendingDeleteRun = null
+                        onDeleteRun(targetRun.runId)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.bad)
+                ) {
+                    Text("Delete", color = Color.White, fontWeight = FontWeight.SemiBold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteRun = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 
     MeloberryPageScaffold(
         title = "Analysis History",
@@ -191,7 +227,7 @@ fun AnalysisHistoryScreen(
                     onExportJson = { onExportJson(run) },
                     onExportMarkdown = { onExportMarkdown(run) },
                     onShareMarkdown = { onShareMarkdown(run) },
-                    onDelete = { onDeleteRun(run.runId) }
+                    onDelete = { pendingDeleteRun = run }
                 )
             }
         }
@@ -229,9 +265,13 @@ private fun AggregateStatsCard(stats: AggregatedWorkspaceStats) {
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Column {
-                    Text("Avg MCQ Accuracy", color = palette.muted, fontSize = 12.sp)
+                    Text("Avg Accuracy", color = palette.muted, fontSize = 12.sp)
                     Text(
-                        text = String.format(Locale.US, "%.1f%%", stats.averageAccuracyPercent),
+                        text = if (stats.gradedRunCount > 0) {
+                            String.format(Locale.US, "%.1f%%", stats.averageAccuracyPercent)
+                        } else {
+                            "—"
+                        },
                         color = palette.accent,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.ExtraBold
@@ -315,7 +355,7 @@ private fun RunHistoryCard(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = "MCQ: ${summary.mcqCorrectFinal}/${summary.mcqTotal} (${String.format(Locale.US, "%.1f%%", summary.mcqAccuracyPercent)}) • Flashcards: ${summary.flashcardKnown}/${summary.flashcardTotal}",
+                        text = "Graded: ${summary.mcqCorrectFinal}/${summary.mcqTotal} (${String.format(Locale.US, "%.1f%%", summary.mcqAccuracyPercent)}) • Flashcards: ${summary.flashcardKnown}/${summary.flashcardTotal}",
                         color = palette.muted,
                         fontSize = 13.sp
                     )

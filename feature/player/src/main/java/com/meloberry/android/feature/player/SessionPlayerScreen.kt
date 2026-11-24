@@ -30,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -46,6 +47,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -57,20 +59,66 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.meloberry.android.core.model.QuestionSlideItem
 import com.meloberry.android.core.model.SlideUiModel
 import com.meloberry.android.core.ui.components.MeloberrySnackbarEffect
 import com.meloberry.android.core.ui.components.PendingDocumentExportEffect
 import com.meloberry.android.core.ui.theme.LocalMeloberryColors
 import com.meloberry.android.core.ui.theme.MeloberryTheme
 import kotlinx.coroutines.launch
+
+data class PlayerV2Callbacks(
+    val onUpdateFillBlankInput: (String, Int, String) -> Unit = { _, _, _ -> },
+    val onCheckFillBlank: (String) -> Unit = {},
+    val onOverrideFillBlankSlot: (String, Int) -> Unit = { _, _ -> },
+    val onOverrideFillBlankCorrect: (String) -> Unit = {},
+    val onRetryFillBlank: (String) -> Unit = {},
+    val onSelectAssertionReason: (String, String) -> Unit = { _, _ -> },
+    val onCheckAssertionReason: (String) -> Unit = {},
+    val onRetryAssertionReason: (String) -> Unit = {},
+    val onToggleSpotErrorSpan: (String, Int) -> Unit = { _, _ -> },
+    val onToggleSpotErrorNoError: (String) -> Unit = {},
+    val onUpdateSpotErrorFix: (String, Int, String) -> Unit = { _, _, _ -> },
+    val onCheckSpotError: (String) -> Unit = {},
+    val onRetrySpotError: (String) -> Unit = {},
+    val onUpdateDiffFillInput: (String, Int, Int, String) -> Unit = { _, _, _, _ -> },
+    val onToggleDiffErrorCell: (String, Int, Int) -> Unit = { _, _, _ -> },
+    val onToggleDiffNoError: (String) -> Unit = {},
+    val onUpdateDiffRearrangeRows: (String, List<List<String>>) -> Unit = { _, _ -> },
+    val onCheckDifferentiation: (String) -> Unit = {},
+    val onOverrideDifferentiationCorrect: (String) -> Unit = {},
+    val onRetryDifferentiation: (String) -> Unit = {},
+    val onUpdateMechanismSequence: (String, List<Int>, List<Int>) -> Unit = { _, _, _ -> },
+    val onCheckMechanism: (String) -> Unit = {},
+    val onRetryMechanism: (String) -> Unit = {},
+    val onToggleRelabelRevealBox: (String, Int) -> Unit = { _, _ -> },
+    val onRateRelabelReveal: (String, String) -> Unit = { _, _ -> },
+    val onAssignRelabelBankLabel: (String, Int, String) -> Unit = { _, _, _ -> },
+    val onUpdateRelabelRecallInput: (String, Int, String) -> Unit = { _, _, _ -> },
+    val onCheckRelabelImage: (String) -> Unit = {},
+    val onOverrideRelabelCorrect: (String) -> Unit = {},
+    val onRetryRelabelImage: (String) -> Unit = {}
+)
 
 @Composable
 fun SessionPlayerRoute(
@@ -80,6 +128,21 @@ fun SessionPlayerRoute(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    DisposableEffect(lifecycleOwner, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> viewModel.onPauseTelemetry()
+                Lifecycle.Event.ON_RESUME -> viewModel.onResumeTelemetry()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     PendingDocumentExportEffect(
         pendingExport = uiState.pendingExport,
@@ -91,7 +154,7 @@ fun SessionPlayerRoute(
     LaunchedEffect(pendingShare) {
         if (pendingShare != null) {
             val intent = Intent(Intent.ACTION_SEND).apply {
-                type = "text/markdown"
+                type = "text/plain"
                 putExtra(Intent.EXTRA_SUBJECT, "Meloberry Session Analysis — ${uiState.workspaceId}")
                 putExtra(Intent.EXTRA_TEXT, pendingShare)
             }
@@ -100,6 +163,41 @@ fun SessionPlayerRoute(
             }
             viewModel.onShareConsumed()
         }
+    }
+
+    val v2Callbacks = remember(viewModel) {
+        PlayerV2Callbacks(
+            onUpdateFillBlankInput = viewModel::onUpdateFillBlankInput,
+            onCheckFillBlank = viewModel::onCheckFillBlank,
+            onOverrideFillBlankSlot = viewModel::onOverrideFillBlankSlot,
+            onOverrideFillBlankCorrect = viewModel::onOverrideFillBlankCorrect,
+            onRetryFillBlank = viewModel::onRetryFillBlank,
+            onSelectAssertionReason = viewModel::onSelectAssertionReason,
+            onCheckAssertionReason = viewModel::onCheckAssertionReason,
+            onRetryAssertionReason = viewModel::onRetryAssertionReason,
+            onToggleSpotErrorSpan = viewModel::onToggleSpotErrorSpan,
+            onToggleSpotErrorNoError = viewModel::onToggleSpotErrorNoError,
+            onUpdateSpotErrorFix = viewModel::onUpdateSpotErrorFix,
+            onCheckSpotError = viewModel::onCheckSpotError,
+            onRetrySpotError = viewModel::onRetrySpotError,
+            onUpdateDiffFillInput = viewModel::onUpdateDiffFillInput,
+            onToggleDiffErrorCell = viewModel::onToggleDiffErrorCell,
+            onToggleDiffNoError = viewModel::onToggleDiffNoError,
+            onUpdateDiffRearrangeRows = viewModel::onUpdateDiffRearrangeRows,
+            onCheckDifferentiation = viewModel::onCheckDifferentiation,
+            onOverrideDifferentiationCorrect = viewModel::onOverrideDifferentiationCorrect,
+            onRetryDifferentiation = viewModel::onRetryDifferentiation,
+            onUpdateMechanismSequence = viewModel::onUpdateMechanismSequence,
+            onCheckMechanism = viewModel::onCheckMechanism,
+            onRetryMechanism = viewModel::onRetryMechanism,
+            onToggleRelabelRevealBox = viewModel::onToggleRelabelRevealBox,
+            onRateRelabelReveal = viewModel::onRateRelabelReveal,
+            onAssignRelabelBankLabel = viewModel::onAssignRelabelBankLabel,
+            onUpdateRelabelRecallInput = viewModel::onUpdateRelabelRecallInput,
+            onCheckRelabelImage = viewModel::onCheckRelabelImage,
+            onOverrideRelabelCorrect = viewModel::onOverrideRelabelCorrect,
+            onRetryRelabelImage = viewModel::onRetryRelabelImage
+        )
     }
 
     SessionPlayerScreen(
@@ -118,6 +216,7 @@ fun SessionPlayerRoute(
         onExportMarkdown = viewModel::onRequestExportMarkdown,
         onShareMarkdown = viewModel::onRequestShareMarkdown,
         onMessageShown = viewModel::onMessageShown,
+        v2Callbacks = v2Callbacks,
         modifier = modifier
     )
 }
@@ -140,12 +239,14 @@ fun SessionPlayerScreen(
     onExportMarkdown: () -> Unit,
     onShareMarkdown: () -> Unit,
     onMessageShown: (Long) -> Unit,
+    v2Callbacks: PlayerV2Callbacks = PlayerV2Callbacks(),
     modifier: Modifier = Modifier
 ) {
     MeloberryTheme(themeMode = uiState.themeMode) {
         val palette = LocalMeloberryColors.current
         val snackbarHostState = remember { SnackbarHostState() }
         var showEarlyFinishDialog by remember { mutableStateOf(false) }
+        var showSearchModal by remember { mutableStateOf(false) }
 
         MeloberrySnackbarEffect(
             messages = uiState.userMessages,
@@ -168,6 +269,16 @@ fun SessionPlayerScreen(
         if (uiState.notFound) {
             PlayerMessageScreen(
                 message = "Workspace '${uiState.workspaceId}' was not found.",
+                onBack = onBack,
+                snackbarHostState = snackbarHostState,
+                modifier = modifier
+            )
+            return@MeloberryTheme
+        }
+
+        if (uiState.loadError != null) {
+            PlayerMessageScreen(
+                message = "Unable to open workspace '${uiState.workspaceId}': ${uiState.loadError}",
                 onBack = onBack,
                 snackbarHostState = snackbarHostState,
                 modifier = modifier
@@ -240,6 +351,21 @@ fun SessionPlayerScreen(
             showPrevComponentMenu = false
         }
 
+        if (showSearchModal) {
+            SessionSearchModal(
+                slides = uiState.slides,
+                onJumpToEntry = { entry ->
+                    showSearchModal = false
+                    if (entry.quizId != null && entry.quizQuestionIndex != null) {
+                        onSelectQuizQuestion(entry.quizId, entry.quizQuestionIndex)
+                    } else {
+                        sessionPager.animateToSlide(entry.outerSlideIndex)
+                    }
+                },
+                onDismiss = { showSearchModal = false }
+            )
+        }
+
         if (showEarlyFinishDialog) {
             AlertDialog(
                 onDismissRequest = { showEarlyFinishDialog = false },
@@ -263,7 +389,24 @@ fun SessionPlayerScreen(
         }
 
         Scaffold(
-            modifier = modifier.fillMaxSize(),
+            modifier = modifier
+                .fillMaxSize()
+                .onPreviewKeyEvent { ev ->
+                    if (ev.type == KeyEventType.KeyDown && ev.key == Key.K && (ev.isCtrlPressed || ev.isMetaPressed)) {
+                        showSearchModal = true
+                        true
+                    } else {
+                        false
+                    }
+                }
+                .onKeyEvent { ev ->
+                    if (ev.type == KeyEventType.KeyDown && ev.key == Key.Slash && !showSearchModal) {
+                        showSearchModal = true
+                        true
+                    } else {
+                        false
+                    }
+                },
             containerColor = palette.background,
             snackbarHost = { SnackbarHost(snackbarHostState) },
             topBar = {
@@ -272,8 +415,9 @@ fun SessionPlayerScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .statusBarsPadding()
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         IconButton(onClick = onBack) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = palette.text)
@@ -281,10 +425,47 @@ fun SessionPlayerScreen(
                         Text(
                             text = uiState.title.ifBlank { "Meloberry" },
                             color = palette.accent,
-                            fontSize = 18.sp,
+                            fontSize = 17.sp,
                             fontWeight = FontWeight.ExtraBold,
-                            maxLines = 1
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
                         )
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = palette.background,
+                            border = BorderStroke(1.dp, palette.border)
+                        ) {
+                            Text(
+                                text = "${activeIndex + 1} / $totalPages",
+                                color = palette.muted,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                        if (uiState.totalMcqCount > 0) {
+                            Surface(
+                                shape = RoundedCornerShape(999.dp),
+                                color = palette.accentSoft,
+                                border = BorderStroke(1.dp, palette.accent.copy(alpha = 0.35f))
+                            ) {
+                                Text(
+                                    text = "${uiState.currentMcqScore}/${uiState.totalMcqCount}",
+                                    color = palette.accent,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+                        IconButton(onClick = { showSearchModal = true }) {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = "Search session",
+                                tint = palette.accent
+                            )
+                        }
                     }
                 }
             },
@@ -336,6 +517,12 @@ fun SessionPlayerScreen(
                                 is SlideUiModel.QuizSlide -> prevSlide.title?.takeIf { it.isNotBlank() } ?: "Quiz"
                                 is SlideUiModel.McqSlide -> "MCQ"
                                 is SlideUiModel.FlashcardSlide -> "Flashcard"
+                                is SlideUiModel.FillBlankSlide -> "Fill in the Blank"
+                                is SlideUiModel.AssertionReasonSlide -> "Assertion–Reason"
+                                is SlideUiModel.SpotErrorSlide -> "Spot the Error"
+                                is SlideUiModel.DifferentiationSlide -> "Differentiation"
+                                is SlideUiModel.MechanismSlide -> "Mechanism"
+                                is SlideUiModel.RelabelImageSlide -> "Relabel Image"
                                 null -> "Component"
                             }
                             DropdownMenu(
@@ -433,30 +620,27 @@ fun SessionPlayerScreen(
                     ) {
                         when (val slide = uiState.slides[pageIndex]) {
                             is SlideUiModel.ArticleSlide -> ArticleSlideCard(slide = slide)
-                            is SlideUiModel.McqSlide -> McqSlideCard(
-                                slide = slide,
-                                runtimeState = uiState.mcqStates[slide.id] ?: McqSlideRuntimeState(),
-                                onToggleOption = { optIdx -> onToggleMcqOption(slide.id, optIdx) },
-                                onCheckAnswer = { onCheckMcqAnswer(slide.id) }
-                            )
-                            is SlideUiModel.FlashcardSlide -> FlashcardSlideCard(
-                                slide = slide,
-                                runtimeState = uiState.flashcardStates[slide.id] ?: FlashcardSlideRuntimeState(),
-                                onFlip = { onFlipFlashcard(slide.id) },
-                                onRate = { rating -> onRateFlashcard(slide.id, rating) }
-                            )
                             is SlideUiModel.QuizSlide -> QuizBundleSlideContent(
                                 quizSlide = slide,
                                 activeQuestionIndex = (uiState.activeQuizQuestionIndex[slide.id] ?: 0)
                                     .coerceIn(0, (slide.questions.size - 1).coerceAtLeast(0)),
                                 slideTransitionMs = uiState.slideTransitionMs,
-                                mcqStates = uiState.mcqStates,
-                                flashcardStates = uiState.flashcardStates,
+                                uiState = uiState,
                                 onSelectQuestion = { qIdx -> onSelectQuizQuestion(slide.id, qIdx) },
                                 onToggleMcqOption = onToggleMcqOption,
                                 onCheckMcqAnswer = onCheckMcqAnswer,
                                 onFlipFlashcard = onFlipFlashcard,
-                                onRateFlashcard = onRateFlashcard
+                                onRateFlashcard = onRateFlashcard,
+                                v2Callbacks = v2Callbacks
+                            )
+                            is QuestionSlideItem -> QuestionSlideContent(
+                                question = slide,
+                                uiState = uiState,
+                                onToggleMcqOption = onToggleMcqOption,
+                                onCheckMcqAnswer = onCheckMcqAnswer,
+                                onFlipFlashcard = onFlipFlashcard,
+                                onRateFlashcard = onRateFlashcard,
+                                v2Callbacks = v2Callbacks
                             )
                         }
                     }
@@ -486,6 +670,86 @@ fun SessionPlayerScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun QuestionSlideContent(
+    question: QuestionSlideItem,
+    uiState: SessionPlayerUiState,
+    onToggleMcqOption: (String, Int) -> Unit,
+    onCheckMcqAnswer: (String) -> Unit,
+    onFlipFlashcard: (String) -> Unit,
+    onRateFlashcard: (String, String) -> Unit,
+    v2Callbacks: PlayerV2Callbacks
+) {
+    when (question) {
+        is SlideUiModel.McqSlide -> McqSlideCard(
+            slide = question,
+            runtimeState = uiState.mcqStates[question.id] ?: McqSlideRuntimeState(),
+            onToggleOption = { optIdx -> onToggleMcqOption(question.id, optIdx) },
+            onCheckAnswer = { onCheckMcqAnswer(question.id) }
+        )
+        is SlideUiModel.FlashcardSlide -> FlashcardSlideCard(
+            slide = question,
+            runtimeState = uiState.flashcardStates[question.id] ?: FlashcardSlideRuntimeState(),
+            onFlip = { onFlipFlashcard(question.id) },
+            onRate = { rating -> onRateFlashcard(question.id, rating) }
+        )
+        is SlideUiModel.FillBlankSlide -> FillBlankSlideCard(
+            slide = question,
+            runtimeState = uiState.fillBlankStates[question.id] ?: FillBlankSlideRuntimeState(),
+            onUpdateInput = { slotIdx, value -> v2Callbacks.onUpdateFillBlankInput(question.id, slotIdx, value) },
+            onCheckAnswer = { v2Callbacks.onCheckFillBlank(question.id) },
+            onOverrideSlot = { slotIdx -> v2Callbacks.onOverrideFillBlankSlot(question.id, slotIdx) },
+            onOverrideCorrect = { v2Callbacks.onOverrideFillBlankCorrect(question.id) },
+            onRetry = { v2Callbacks.onRetryFillBlank(question.id) }
+        )
+        is SlideUiModel.AssertionReasonSlide -> AssertionReasonSlideCard(
+            slide = question,
+            runtimeState = uiState.assertionReasonStates[question.id] ?: AssertionReasonSlideRuntimeState(),
+            onSelectCode = { code -> v2Callbacks.onSelectAssertionReason(question.id, code) },
+            onCheckAnswer = { v2Callbacks.onCheckAssertionReason(question.id) },
+            onRetry = { v2Callbacks.onRetryAssertionReason(question.id) }
+        )
+        is SlideUiModel.SpotErrorSlide -> SpotErrorSlideCard(
+            slide = question,
+            runtimeState = uiState.spotErrorStates[question.id] ?: SpotErrorSlideRuntimeState(),
+            onToggleSpan = { spanIdx -> v2Callbacks.onToggleSpotErrorSpan(question.id, spanIdx) },
+            onToggleNoError = { v2Callbacks.onToggleSpotErrorNoError(question.id) },
+            onUpdateFix = { spanIdx, fix -> v2Callbacks.onUpdateSpotErrorFix(question.id, spanIdx, fix) },
+            onCheckAnswer = { v2Callbacks.onCheckSpotError(question.id) },
+            onRetry = { v2Callbacks.onRetrySpotError(question.id) }
+        )
+        is SlideUiModel.DifferentiationSlide -> DifferentiationSlideCard(
+            slide = question,
+            runtimeState = uiState.differentiationStates[question.id] ?: DifferentiationSlideRuntimeState(),
+            onUpdateFillInput = { r, c, value -> v2Callbacks.onUpdateDiffFillInput(question.id, r, c, value) },
+            onToggleErrorCell = { r, c -> v2Callbacks.onToggleDiffErrorCell(question.id, r, c) },
+            onToggleNoError = { v2Callbacks.onToggleDiffNoError(question.id) },
+            onUpdateRearrangeRows = { rows -> v2Callbacks.onUpdateDiffRearrangeRows(question.id, rows) },
+            onCheckAnswer = { v2Callbacks.onCheckDifferentiation(question.id) },
+            onOverrideCorrect = { v2Callbacks.onOverrideDifferentiationCorrect(question.id) },
+            onRetry = { v2Callbacks.onRetryDifferentiation(question.id) }
+        )
+        is SlideUiModel.MechanismSlide -> MechanismSlideCard(
+            slide = question,
+            runtimeState = uiState.mechanismStates[question.id] ?: MechanismSlideRuntimeState(),
+            onUpdateSequence = { bank, placed -> v2Callbacks.onUpdateMechanismSequence(question.id, bank, placed) },
+            onCheckAnswer = { v2Callbacks.onCheckMechanism(question.id) },
+            onRetry = { v2Callbacks.onRetryMechanism(question.id) }
+        )
+        is SlideUiModel.RelabelImageSlide -> RelabelImageSlideCard(
+            slide = question,
+            runtimeState = uiState.relabelImageStates[question.id] ?: RelabelImageSlideRuntimeState(),
+            onToggleRevealBox = { boxIdx -> v2Callbacks.onToggleRelabelRevealBox(question.id, boxIdx) },
+            onRateReveal = { rating -> v2Callbacks.onRateRelabelReveal(question.id, rating) },
+            onAssignBankLabel = { boxIdx, label -> v2Callbacks.onAssignRelabelBankLabel(question.id, boxIdx, label) },
+            onUpdateRecallInput = { boxIdx, value -> v2Callbacks.onUpdateRelabelRecallInput(question.id, boxIdx, value) },
+            onCheckAnswer = { v2Callbacks.onCheckRelabelImage(question.id) },
+            onOverrideCorrect = { v2Callbacks.onOverrideRelabelCorrect(question.id) },
+            onRetry = { v2Callbacks.onRetryRelabelImage(question.id) }
+        )
     }
 }
 
@@ -612,13 +876,13 @@ private fun QuizBundleSlideContent(
     quizSlide: SlideUiModel.QuizSlide,
     activeQuestionIndex: Int,
     slideTransitionMs: Int,
-    mcqStates: Map<String, McqSlideRuntimeState>,
-    flashcardStates: Map<String, FlashcardSlideRuntimeState>,
+    uiState: SessionPlayerUiState,
     onSelectQuestion: (Int) -> Unit,
     onToggleMcqOption: (String, Int) -> Unit,
     onCheckMcqAnswer: (String) -> Unit,
     onFlipFlashcard: (String) -> Unit,
-    onRateFlashcard: (String, String) -> Unit
+    onRateFlashcard: (String, String) -> Unit,
+    v2Callbacks: PlayerV2Callbacks
 ) {
     val palette = LocalMeloberryColors.current
     val questions = quizSlide.questions
@@ -659,8 +923,14 @@ private fun QuizBundleSlideContent(
             questions.forEachIndexed { idx, questionItem ->
                 val isSelected = idx == clampedActiveIndex
                 val isAnswered = when (questionItem) {
-                    is SlideUiModel.McqSlide -> mcqStates[questionItem.id]?.isChecked == true
-                    is SlideUiModel.FlashcardSlide -> flashcardStates[questionItem.id]?.rating != null
+                    is SlideUiModel.McqSlide -> uiState.mcqStates[questionItem.id]?.isChecked == true
+                    is SlideUiModel.FlashcardSlide -> uiState.flashcardStates[questionItem.id]?.rating != null
+                    is SlideUiModel.FillBlankSlide -> uiState.fillBlankStates[questionItem.id]?.isChecked == true
+                    is SlideUiModel.AssertionReasonSlide -> uiState.assertionReasonStates[questionItem.id]?.isChecked == true
+                    is SlideUiModel.SpotErrorSlide -> uiState.spotErrorStates[questionItem.id]?.isChecked == true
+                    is SlideUiModel.DifferentiationSlide -> uiState.differentiationStates[questionItem.id]?.isChecked == true
+                    is SlideUiModel.MechanismSlide -> uiState.mechanismStates[questionItem.id]?.isChecked == true
+                    is SlideUiModel.RelabelImageSlide -> uiState.relabelImageStates[questionItem.id]?.isChecked == true
                 }
                 val bubbleBg = when {
                     isSelected -> palette.accent
@@ -708,20 +978,15 @@ private fun QuizBundleSlideContent(
                 modifier = Modifier.fillMaxWidth(),
                 contentAlignment = Alignment.TopCenter
             ) {
-                when (val question = questions[qIndex]) {
-                    is SlideUiModel.McqSlide -> McqSlideCard(
-                        slide = question,
-                        runtimeState = mcqStates[question.id] ?: McqSlideRuntimeState(),
-                        onToggleOption = { optIdx -> onToggleMcqOption(question.id, optIdx) },
-                        onCheckAnswer = { onCheckMcqAnswer(question.id) }
-                    )
-                    is SlideUiModel.FlashcardSlide -> FlashcardSlideCard(
-                        slide = question,
-                        runtimeState = flashcardStates[question.id] ?: FlashcardSlideRuntimeState(),
-                        onFlip = { onFlipFlashcard(question.id) },
-                        onRate = { rating -> onRateFlashcard(question.id, rating) }
-                    )
-                }
+                QuestionSlideContent(
+                    question = questions[qIndex],
+                    uiState = uiState,
+                    onToggleMcqOption = onToggleMcqOption,
+                    onCheckMcqAnswer = onCheckMcqAnswer,
+                    onFlipFlashcard = onFlipFlashcard,
+                    onRateFlashcard = onRateFlashcard,
+                    v2Callbacks = v2Callbacks
+                )
             }
         }
     }

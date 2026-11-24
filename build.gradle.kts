@@ -14,6 +14,26 @@ plugins {
     alias(libs.plugins.hilt) apply false
 }
 
+// Single Source of Truth versioning derived from gradle/libs.versions.toml
+val meloberryVersionName: String = libs.versions.meloberryAppVersion.get()
+val meloberryVersionCode: Int = meloberryVersionName
+    .substringBefore("-")
+    .split(".")
+    .map { it.toInt() }
+    .also { parts ->
+        require(parts.size == 3 && parts.all { it in 0..99 }) {
+            "meloberryAppVersion must use MAJOR.MINOR.PATCH (each 0..99), got '$meloberryVersionName'"
+        }
+    }
+    .let { (major, minor, patch) -> major * 10_000 + minor * 100 + patch }
+
+extra["meloberryVersionName"] = meloberryVersionName
+extra["meloberryVersionCode"] = meloberryVersionCode
+extra["meloberryTargetPackageVersion"] = libs.versions.meloberryTargetPackageVersion.get()
+extra["meloberryLegacyPackageVersion"] = libs.versions.meloberryLegacyPackageVersion.get()
+extra["meloberrySupportedPackageVersions"] = libs.versions.meloberrySupportedPackageVersions.get()
+extra["meloberryAnalysisSchemaVersion"] = libs.versions.meloberryAnalysisSchemaVersion.get()
+
 subprojects {
     val configureAndroid: CommonExtension<*, *, *, *, *, *>.() -> Unit = {
         compileSdk = 35

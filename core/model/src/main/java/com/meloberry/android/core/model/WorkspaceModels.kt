@@ -12,12 +12,49 @@ enum class ComponentKind {
 
 enum class ArticleBlockKind {
     TEXT,
-    IMAGE
+    IMAGE,
+    CALLOUT,
+    TABLE
 }
 
-enum class QuestionType {
-    MCQ,
-    FLASHCARD
+enum class CalloutTone(val wireName: String) {
+    PEARL("pearl"),
+    CLINICAL("clinical"),
+    WARNING("warning");
+
+    companion object {
+        fun fromRaw(raw: String?): CalloutTone? = when (raw?.trim()?.lowercase()) {
+            "pearl" -> PEARL
+            "clinical" -> CLINICAL
+            "warning" -> WARNING
+            else -> null
+        }
+    }
+}
+
+enum class QuestionType(val wireName: String) {
+    MCQ("mcq"),
+    FLASHCARD("flashcard"),
+    FILL_BLANK("fill-blank"),
+    ASSERTION_REASON("assertion-reason"),
+    SPOT_ERROR("spot-error"),
+    DIFFERENTIATION("diff"),
+    MECHANISM("mechanism"),
+    RELABEL_IMAGE("relabel");
+
+    companion object {
+        fun fromRaw(raw: String?): QuestionType? = when (raw?.trim()?.lowercase()) {
+            "mcq" -> MCQ
+            "flashcard" -> FLASHCARD
+            "fill-blank", "fillblank" -> FILL_BLANK
+            "assertion-reason", "assertionreason" -> ASSERTION_REASON
+            "spot-error", "spoterror" -> SPOT_ERROR
+            "diff", "differentiation" -> DIFFERENTIATION
+            "mechanism" -> MECHANISM
+            "relabel", "relabel-image", "relabelimage" -> RELABEL_IMAGE
+            else -> null
+        }
+    }
 }
 
 enum class MediaPosition {
@@ -104,7 +141,8 @@ data class ComponentModel(
     val questions: List<QuestionModel>,
     val articleBlocks: List<ArticleBlockModel>,
     val layoutOverrides: Map<String, String>,
-    val title: String? = null
+    val title: String? = null,
+    val refKey: String? = null
 )
 
 data class ArticleBlockModel(
@@ -112,7 +150,13 @@ data class ArticleBlockModel(
     val index: Int,
     val kind: ArticleBlockKind,
     val textContent: String?,
-    val imageFilePath: String?
+    val imageFilePath: String?,
+    val caption: String? = null,
+    val alt: String? = null,
+    val calloutTone: CalloutTone? = null,
+    val calloutTitle: String? = null,
+    val refKey: String? = null,
+    val tablePayload: TableBlockPayload? = null
 )
 
 sealed interface QuestionModel {
@@ -120,6 +164,7 @@ sealed interface QuestionModel {
     val index: Int
     val type: QuestionType
     val layoutOverrides: Map<String, String>
+    val refKey: String?
 }
 
 data class McqOptionModel(
@@ -138,7 +183,8 @@ data class McqQuestionModel(
     val options: List<McqOptionModel>,
     override val layoutOverrides: Map<String, String>,
     val promptImageFilePath: String? = null,
-    val explanation: String? = null
+    val explanation: String? = null,
+    override val refKey: String? = null
 ) : QuestionModel {
     override val type: QuestionType = QuestionType.MCQ
 }
@@ -146,7 +192,8 @@ data class McqQuestionModel(
 data class FlashcardSideModel(
     val text: String?,
     val imageFilePath: String?,
-    val position: MediaPosition
+    val position: MediaPosition,
+    val isPositionExplicit: Boolean = false
 )
 
 data class FlashcardQuestionModel(
@@ -154,9 +201,70 @@ data class FlashcardQuestionModel(
     override val index: Int,
     val front: FlashcardSideModel,
     val back: FlashcardSideModel,
-    override val layoutOverrides: Map<String, String>
+    override val layoutOverrides: Map<String, String>,
+    override val refKey: String? = null
 ) : QuestionModel {
     override val type: QuestionType = QuestionType.FLASHCARD
+}
+
+data class FillBlankQuestionModel(
+    override val id: String,
+    override val index: Int,
+    val payload: FillBlankPayload,
+    override val layoutOverrides: Map<String, String>,
+    override val refKey: String? = null
+) : QuestionModel {
+    override val type: QuestionType = QuestionType.FILL_BLANK
+}
+
+data class AssertionReasonQuestionModel(
+    override val id: String,
+    override val index: Int,
+    val payload: AssertionReasonPayload,
+    override val layoutOverrides: Map<String, String>,
+    override val refKey: String? = null
+) : QuestionModel {
+    override val type: QuestionType = QuestionType.ASSERTION_REASON
+}
+
+data class SpotErrorQuestionModel(
+    override val id: String,
+    override val index: Int,
+    val payload: SpotErrorPayload,
+    override val layoutOverrides: Map<String, String>,
+    override val refKey: String? = null
+) : QuestionModel {
+    override val type: QuestionType = QuestionType.SPOT_ERROR
+}
+
+data class DifferentiationQuestionModel(
+    override val id: String,
+    override val index: Int,
+    val payload: DifferentiationPayload,
+    override val layoutOverrides: Map<String, String>,
+    override val refKey: String? = null
+) : QuestionModel {
+    override val type: QuestionType = QuestionType.DIFFERENTIATION
+}
+
+data class MechanismQuestionModel(
+    override val id: String,
+    override val index: Int,
+    val payload: MechanismPayload,
+    override val layoutOverrides: Map<String, String>,
+    override val refKey: String? = null
+) : QuestionModel {
+    override val type: QuestionType = QuestionType.MECHANISM
+}
+
+data class RelabelImageQuestionModel(
+    override val id: String,
+    override val index: Int,
+    val payload: RelabelImagePayload,
+    override val layoutOverrides: Map<String, String>,
+    override val refKey: String? = null
+) : QuestionModel {
+    override val type: QuestionType = QuestionType.RELABEL_IMAGE
 }
 
 data class ResolvedSlideLayout(
@@ -202,6 +310,48 @@ sealed interface SlideUiModel {
         override val slideIndex: Int,
         override val layout: ResolvedSlideLayout,
         val question: FlashcardQuestionModel
+    ) : QuestionSlideItem
+
+    data class FillBlankSlide(
+        override val id: String,
+        override val slideIndex: Int,
+        override val layout: ResolvedSlideLayout,
+        val question: FillBlankQuestionModel
+    ) : QuestionSlideItem
+
+    data class AssertionReasonSlide(
+        override val id: String,
+        override val slideIndex: Int,
+        override val layout: ResolvedSlideLayout,
+        val question: AssertionReasonQuestionModel
+    ) : QuestionSlideItem
+
+    data class SpotErrorSlide(
+        override val id: String,
+        override val slideIndex: Int,
+        override val layout: ResolvedSlideLayout,
+        val question: SpotErrorQuestionModel
+    ) : QuestionSlideItem
+
+    data class DifferentiationSlide(
+        override val id: String,
+        override val slideIndex: Int,
+        override val layout: ResolvedSlideLayout,
+        val question: DifferentiationQuestionModel
+    ) : QuestionSlideItem
+
+    data class MechanismSlide(
+        override val id: String,
+        override val slideIndex: Int,
+        override val layout: ResolvedSlideLayout,
+        val question: MechanismQuestionModel
+    ) : QuestionSlideItem
+
+    data class RelabelImageSlide(
+        override val id: String,
+        override val slideIndex: Int,
+        override val layout: ResolvedSlideLayout,
+        val question: RelabelImageQuestionModel
     ) : QuestionSlideItem
 
     data class QuizSlide(

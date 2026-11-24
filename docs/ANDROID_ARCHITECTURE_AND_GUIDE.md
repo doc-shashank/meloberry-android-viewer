@@ -1,10 +1,10 @@
-# Meloberry Android Architecture & Reference
+# Meloberry Android Architecture & Reference (`v2.0.0`)
 
-Technical specification covering module structure, `.mbypkg` ingestion, layout parity, player interaction, analysis schema, and persistence guarantees.
+Technical specification covering module structure, SSOT versioning, `.mbypkg` v1.0/v2.0 ingestion, layout & grading parity with Meloberry CLI `v2.0.0`, player interaction, analysis schema, and persistence guarantees.
 
 ---
 
-## 1. Module Dependency Graph
+## 1. Module Dependency Graph & SSOT Versioning
 
 ```
 :app
@@ -17,53 +17,67 @@ Technical specification covering module structure, `.mbypkg` ingestion, layout p
  └── :core:ui ──▶ :core:model
 ```
 
-- **Tech Stack**: Kotlin, Jetpack Compose Material 3 (Adaptive `NavigationSuiteScaffold`), Hilt, Room, DataStore, `kotlinx.serialization`, Coil (`coil-compose` + `coil-svg` + `coil-gif`), `ru.noties:jlatexmath-android` (zero-WebView native LaTeX), JUnit 4 + `kotlinx.coroutines.test`.
+- **SSOT Versioning (`gradle/libs.versions.toml` → `GenerateMeloberryVersionInfoTask`)**:
+  - `meloberryAppVersion = "2.0.0"` derives `versionCode = 20000` (`MAJOR * 10000 + MINOR * 100 + PATCH`).
+  - `meloberrySupportedPackageVersions = "1.0,2.0"` populates `MeloberryVersionInfo.SUPPORTED_PACKAGE_VERSIONS` used by `MbypkgArchiveDataSource`.
+  - `meloberryTargetPackageVersion = "2.0"` and `meloberryAnalysisSchemaVersion = "1.0"` keep package exports, bundled samples, and UI version surfaces synchronized from a single source of truth.
+- **Tech Stack**: Kotlin 2.0, Jetpack Compose Material 3 (Adaptive `NavigationSuiteScaffold`), Hilt, Room, DataStore, `kotlinx.serialization`, Coil (`coil-compose` + `coil-svg` + `coil-gif`), `ru.noties:jlatexmath-android` (zero-WebView native LaTeX), JUnit 4 + `kotlinx.coroutines.test`.
 - **Release R8 Configuration**: `app/proguard-rules.pro` preserves `kotlinx.serialization` serializers, Room entities/DAOs, Hilt generated factories, `ViewModel` constructors, and `jlatexmath-android` reflection/font classes when `isMinifyEnabled = true`.
 
 ---
 
-## 2. `.mbypkg` Import & Storage Pipeline
+## 2. `.mbypkg` v1.0 & v2.0 Import & Storage Pipeline
 
-`MbypkgArchiveDataSource.extractAndParse` unpacks ZIP archives safely:
+`MbypkgArchiveDataSource.stageAndValidate` / `extractAndParse` unpacks ZIP archives safely:
 
 1. **Path, Image & Size Validation**:
-   - Normalizes entry separators and verifies path segments contain neither `"."` nor `".."` (`assets/fig..1.png` is valid; traversal segments fail).
-   - Enforces streaming decompressed byte caps of **50 MB** per ZIP entry and **250 MB** per archive while writing `assets/<filename>` directly to a temporary staging folder on disk.
-   - Verifies every `assets/*` payload via `ImageAssetVerifier` (magic bytes for PNG, JPEG, GIF, WebP, BMP, and strict UTF-8 SVG rejecting `<script>`, `<foreignObject>`, `on*=`, `javascript:`, `vbscript:`, `data:text/html`) and requires referenced paths to stay inside `assets/`.
-   - Rejects invalid or escaping `manifest.id` values (blank, `"."`, containing `/`, `\`, or `".."`), and parses component `title`, standalone quiz `name`/`description`, and MCQ `promptImagePath`/`explanation`.
+   - Accepts `packageVersion` in `MeloberryVersionInfo.SUPPORTED_PACKAGE_VERSIONS` (`"1.0"`, `"2.0"`).
+   - Normalizes entry separators, rejects rooted paths and `"."`/`".."` traversal segments (`assets/fig..1.png` is valid), and enforces streaming decompressed caps of **50 MB** per entry and **250 MB** per archive.
+   - Verifies every `assets/*` payload via `ImageAssetVerifier` (header-only magic-byte validation for large rasters PNG/JPEG/GIF/WebP/BMP; size-capped strict-UTF8 SVG sanitization rejecting `<script>`, `<foreignObject>`, `on*=`, `javascript:`, `vbscript:`, `data:text/html`) and confines all referenced paths inside `assets/`.
+   - Validates workspace-wide case-insensitive `refKey` uniqueness (rejecting reserved positional keys `c\d+` / `q\d+`).
+   - Decodes and validates all 4 article block kinds (`Text`, `Image`, `Callout`, `Table`) and all 8 question kinds (`Mcq`, `Flashcard` w/ `isPositionExplicit`, `FillBlank`, `AssertionReason`, `SpotError`, `Differentiation`, `Mechanism`, `RelabelImage` w/ normalized box bounds `x + w <= 1.001`, `y + h <= 1.001`).
 2. **Pre-Commit Validation & Atomic Swap**:
-   - Decodes `manifest.json`, `workspace.json`, and optional `layouts.json`, then executes `parseWorkspace(...)` completely before touching any existing workspace files in `filesDir/workspaces/<id>/`.
-   - Moves staged assets via temporary commit/backup swap directories so failed imports leave pre-existing workspace data intact.
+   - Validates `manifest.json`, `workspace.json`, and `layouts.json` completely in staging before touching existing files in `filesDir/workspaces/<id>/`.
+   - `DefaultWorkspaceRepository` writes Room metadata first (`upsertWorkspace`), then commits staged assets atomically so failed DB transactions never leave corrupted asset directories.
 3. **Persistence & Cascade Deletion**:
-   - Stores workspace metadata and raw JSON snapshots in `workspaces` (`WorkspaceEntity`), seeded once from `BundledSampleDataSource` on first launch.
+   - Seeds the v2.0 showcase workspace once from `BundledSampleDataSource` on first launch.
    - `DefaultWorkspaceRepository.deleteWorkspace(id)` removes the `workspaces` row, deletes `filesDir/workspaces/<id>/`, deletes matching `analysis_runs` rows via `AnalysisRunDao.deleteByWorkspaceId(id)`, and removes `filesDir/reports/<id>/`.
 
 ---
 
-## 3. Navigation, Player & Rendering
+## 3. Navigation, Player, Search & Rendering
 
-### Adaptive Chrome (`MeloberryApp`)
-`MeloberryApp` renders a single `MeloberryNavHost` composable inside `NavigationSuiteScaffold`, switching `layoutType` to `NavigationSuiteType.None` on `PlayerDest` so `LibraryDest` and `HistoryDest` back-stack state remains preserved across player transitions.
+### Adaptive Chrome & App Theme (`MainActivity`, `MeloberryApp`)
+- `MainActivity` handles incoming `ACTION_VIEW` intents for `.mbypkg` files and observes `PreferencesDataStoreSource.appThemeMode` (`BERRY`, `LIGHT`, `DARK`, `PAPER`), selectable from `LibraryScreen`'s palette menu alongside the `v2.0.0` version badge.
+- `MeloberryApp` hosts `NavigationSuiteScaffold`, switching `layoutType` to `NavigationSuiteType.None` on `PlayerDest` so `LibraryDest` and `HistoryDest` back-stack state stays intact.
 
-### Greeting, Pager & Quiz Cards
-- **Greeting Screen (`SessionGreetingScreen`)**: Displays the CLI-parity Greeting Card (`MELOBERRY` tab, `title`, `description`, `<N> component(s) • <M> item(s)`, `Start Session →`) and starts session/dwell timers on `Start Session →`.
-- **Slide Tracking (`SessionPlayerScreen`)**: Observes `pagerState.settledPage` on both top-level session components and nested `QuizBundleSlideContent` pagers (displaying optional component `title`s), preventing intermediate animation pages from overwriting `currentSlideIndex` or inflating visit counters.
-- **MCQ Cards (`McqSlideCard`)**: Supports single-correct and multi-correct answer evaluation, optional `promptImageFilePath`, post-check `explanation` box (matching CLI re-toggle semantics), and 1 or 2 columns (`optionColumns`) spaced by `optionGapDp`.
-- **Flashcard Cards (`FlashcardSlideCard`)**: 3D Y-axis flip card (`flipDurationMs`), `Front`/`Back` faces honoring explicit side position (`TextAboveImage`) or inherited `layout.defaultTextPosition`, plus `Got It` / `Needs Review` self-rating buttons.
-- **Markdown, Native LaTeX & Assets**:
-  - `MarkdownText` + `NativeLatexFormula` (`jlatexmath-android` via Compose `Canvas` & `InlineTextContent`, zero WebView) supports `#`..`######` headings (scaled by `promptFontSizeSp` in articles), `$$...$$` display & `$...$` inline math, bulleted/numbered/nested lists, task lists (`- [ ]`/`- [x]`), multi-line blockquotes, horizontal rules (`---`/`***`/`___`), horizontally scrollable fenced code blocks, aligned GFM tables, strikethrough (`~~...~~`), sanitized clickable links, and inline `***bold italic***`, `**bold**`/`__bold__`, `*italic*`/`_italic_`, and `` `code` `` honoring `contentAlign` (`LEFT`, `CENTER`, `RIGHT`).
-  - `MeloberryAssetImage` reuses a singleton `ImageLoader` configured with `SvgDecoder.Factory()` and GIF decoding (`coil-gif`) and opens a full-screen pinch/double-tap zoom dialog on tap.
+### Article & Interactive Question Cards (`:feature:player`)
+- **Greeting Screen (`SessionGreetingScreen`)**: Displays `MELOBERRY` tab, `title`, `description`, `<N> component(s) • <M> item(s)`, and starts session/dwell timers on `Start Session →`.
+- **Upgraded Top Bar & In-Session Search (`SessionSearchModal`)**: Displays active slide position (`current / total`), live graded score pill, and a Search trigger (also bound to `Ctrl+K` / `/`) backed by `SessionSearchIndex` across text, callouts, tables, and all 8 question payloads with highlighted snippets and direct jump to nested quiz questions.
+- **Articles (`ArticleSlideCard`)**:
+  - `TEXT`: Full GFM Markdown + native LaTeX (`MarkdownText` + `NativeLatexFormula`).
+  - `IMAGE`: Zoomable `MeloberryAssetImage` with `alt` accessibility description and Markdown/LaTeX `caption`.
+  - `CALLOUT` (`CalloutBlockCard`): Toned left accent bar & icon for `pearl`, `clinical`, and `warning` across all 4 themes.
+  - `TABLE` (`InteractiveTableBlockCard`): Horizontally scrollable grid with `stickyFirstCol` split layout and `hideableCols` active-recall toggle pills + tap-to-peek cells.
+- **Interactive Question Cards**:
+  - `McqSlideCard`: Single/multi-correct options, prompt/option media, 1–2 column grid, post-check explanation.
+  - `FlashcardSlideCard`: 3D Y-axis flip card honoring `side.isPositionExplicit` before falling back to `layout.defaultTextPosition`, plus `Got It` / `Needs Review` ratings.
+  - `FillBlankSlideCard`: Inline/stacked slot inputs with exact/fuzzy badges, per-slot & question `"Override: Mark Correct"`, and math/code-preserving badge rendering.
+  - `AssertionReasonSlideCard`: Styled Assertion/Reason banners with `4opt` / `5opt` choices.
+  - `SpotErrorSlideCard`: Flow-wrapped tappable candidate spans, `"No error"` toggle, dynamic `requireFix` inputs, and strikethrough → correction reveal.
+  - `DifferentiationSlideCard`: Tailored comparison table for `fill` (with word bank + override), `spot-wrong` (with `allowNoError`), and `rearrange` (tap-to-swap shuffled cells).
+  - `MechanismSlideCard`: Deterministically shuffled step bank, sequence builder with Up/Down/Remove controls, distractor exclusion, and parallel `orderGroup` grading.
+  - `RelabelImageSlideCard`: Aspect-ratio-locked diagram with normalized box overlays across `solid`, `blur`, `pixelate`, and `whiteout` mask styles, `reveal`/`bank`/`recall` modes, and a zoomable lightbox preserving mask overlays.
 
-### Layout Resolution (`BuildSlideDeckUseCase` & `LayoutBoundsCatalog`)
-Merges `BaseDefaults -> GlobalLayouts -> ComponentOverrides -> QuestionOverrides`:
-- Deck `themeMode` (`berry`, `light`, `dark`, `paper`) and `slideTransitionMs` (`100..1200`) resolve across `mcq`, `article`, and `flashcard` profiles (preferring customized non-default values when any profile omits them).
+### Layout Resolution & Grading Engine (`:domain`)
+- `BuildSlideDeckUseCase` + `LayoutBoundsCatalog` merge `BaseDefaults -> GlobalLayouts -> ComponentOverrides -> QuestionOverrides`. All 6 v2.0 question types inherit `LayoutTargetType.MCQ`; tables and callouts inherit `LayoutTargetType.ARTICLE`.
+- `RecallAnswerMatcher` (Greek symbol normalization, punctuation/dash compaction, Levenshtein threshold `length >= 6 && dist <= 1`) and `DeterministicShuffler` (FNV-1a + LCG) match CLI `SlidingWebAppGenerator.cs` bit-for-bit.
+- Dedicated evaluators (`EvaluateMcqAnswerUseCase`, `EvaluateFillBlankUseCase`, `EvaluateAssertionReasonUseCase`, `EvaluateSpotErrorUseCase`, `EvaluateDifferentiationUseCase`, `EvaluateMechanismUseCase`, `EvaluateRelabelImageUseCase`) run purely on the JVM.
 
 ---
 
 ## 4. Session Analysis & Export Lifecycle
 
-- **`SessionAnalysisReport` Schema**: Compatible with Meloberry CLI (`schemaVersion = "1.0"`). When `mcqTotal == 0` (flashcard/article decks), `mcqAccuracyPercent` defaults to `100.0`.
-- **Local & SAF Export (`DefaultAnalysisRepository`, Routes)**:
-  - Each finished session saves a row in `analysis_runs` and writes `${runId}.analysis.json` and `${runId}.analysis.md` under `filesDir/reports/<workspaceId>/`.
-  - `DefaultAnalysisRepository.deleteRun(runId)` removes both the DB record and the corresponding `.analysis.json` / `.analysis.md` files.
-  - `AnalysisHistoryRoute` and `SessionPlayerRoute` retain export readiness across configuration changes (`rememberSaveable` awaiting flag + `ViewModel.onExportConsumed()` only after the `CreateDocument` result callback) and wrap share `Intent` launches in `runCatching`.
+- **`SessionAnalysisReport` Schema (`schemaVersion = "1.0"`)**: Aggregates `GRADED_QUESTION_KINDS` (`mcq`, `fill-blank`, `assertion-reason`, `spot-error`, `diff`, `mechanism`, `relabel`) into summary counters, `weakItemIds`, and CLI-identical Markdown (`- **Graded Questions:** ...`).
+- **Telemetry & Process-Death Survival (`SessionPlayerViewModel`)**: Pauses dwell timers on `ON_PAUSE`/`ON_STOP`, persists full runtime state for all 8 question kinds into `SavedStateHandle`, and updates the existing `savedRunId` in place when re-finishing a session.
+- **Local & SAF Export (`DefaultAnalysisRepository`, Routes)**: Writes `${runId}.analysis.json` and `${runId}.analysis.md` under `filesDir/reports/<workspaceId>/`, filters and aggregates graded runs in `AnalysisHistoryScreen`, and preserves SAF export payloads across configuration changes via `PendingDocumentExportEffect`.

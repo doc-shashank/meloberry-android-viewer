@@ -105,7 +105,7 @@ class AnalysisHistoryViewModel @Inject constructor(
     fun onExportRunMarkdown(run: SavedAnalysisRun) {
         pendingExport.value = PendingExportPayload(
             suggestedFileName = "${run.runId}.analysis.md",
-            mimeType = "text/markdown",
+            mimeType = "text/plain",
             content = run.markdown
         )
     }

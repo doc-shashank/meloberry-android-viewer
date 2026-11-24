@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.sp
 import com.meloberry.android.core.model.SessionAnalysisReport
 import com.meloberry.android.core.model.SlideAnalysisEntry
 import com.meloberry.android.core.ui.theme.LocalMeloberryColors
+import com.meloberry.android.domain.BuildAnalysisReportUseCase
 import java.util.Locale
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -95,7 +96,7 @@ internal fun AnalysisSummaryCard(
 
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                StatBox("MCQ SCORE", "${report.summary.mcqCorrectFinal} / ${report.summary.mcqTotal}", Modifier.weight(1f))
+                StatBox("GRADED SCORE", "${report.summary.mcqCorrectFinal} / ${report.summary.mcqTotal}", Modifier.weight(1f))
                 StatBox("ACCURACY", String.format(Locale.US, "%.1f%%", report.summary.mcqAccuracyPercent), Modifier.weight(1f))
             }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -120,7 +121,7 @@ internal fun AnalysisSummaryCard(
                 ) {
                     Icon(Icons.Default.CheckCircle, contentDescription = null, tint = palette.ok, modifier = Modifier.size(20.dp))
                     Text(
-                        text = "All MCQs & flashcards look solid — no review flags raised.",
+                        text = "All graded questions & flashcards look solid — no review flags raised.",
                         color = palette.ok,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold
@@ -229,9 +230,10 @@ internal fun AnalysisSummaryCard(
 private fun SlideBreakdownItemCard(entry: SlideAnalysisEntry) {
     val palette = LocalMeloberryColors.current
 
-    val (statusLabel, statusColor) = when (entry.kind) {
-        "mcq" -> if (entry.isCorrect == true) "Correct" to palette.ok else "Missed" to palette.bad
-        "flashcard" -> when (entry.flashcardRating) {
+    val isGraded = entry.kind in BuildAnalysisReportUseCase.GRADED_QUESTION_KINDS
+    val (statusLabel, statusColor) = when {
+        isGraded -> if (entry.isCorrect == true) "Correct" to palette.ok else "Missed" to palette.bad
+        entry.kind == "flashcard" -> when (entry.flashcardRating) {
             "known" -> "Known" to palette.ok
             "needsReview" -> "Review" to palette.bad
             else -> "Unrated" to palette.muted
@@ -239,9 +241,9 @@ private fun SlideBreakdownItemCard(entry: SlideAnalysisEntry) {
         else -> if (entry.visitedCount > 0) "Viewed" to palette.accent else "Skipped" to palette.muted
     }
 
-    val activityMeta = when (entry.kind) {
-        "mcq" -> "Checks: ${entry.checkAttempts ?: 0}  •  Visits: ${entry.visitedCount}"
-        "flashcard" -> "Flips: ${entry.flipCount ?: 0}  •  Visits: ${entry.visitedCount}"
+    val activityMeta = when {
+        isGraded -> "Checks: ${entry.checkAttempts ?: 0}  •  Visits: ${entry.visitedCount}"
+        entry.kind == "flashcard" -> "Flips: ${entry.flipCount ?: 0}  •  Visits: ${entry.visitedCount}"
         else -> "Visits: ${entry.visitedCount}"
     }
 

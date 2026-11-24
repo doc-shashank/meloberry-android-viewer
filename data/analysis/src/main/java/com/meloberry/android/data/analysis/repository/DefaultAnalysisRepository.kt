@@ -51,14 +51,17 @@ internal class DefaultAnalysisRepository @Inject constructor(
 
     override suspend fun saveCompletedRun(
         report: SessionAnalysisReport,
-        markdown: String
+        markdown: String,
+        existingRunId: String?
     ): SavedAnalysisRun = externalScope.async(ioDispatcher) {
         writeMutex.withLock {
             val nowMs = System.currentTimeMillis()
-            val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).apply {
-                timeZone = TimeZone.getTimeZone("UTC")
-            }.format(Date(nowMs))
-            val runId = "${report.workspaceId}_${stamp}_${UUID.randomUUID().toString().take(4)}"
+            val runId = existingRunId?.takeIf { it.isNotBlank() } ?: run {
+                val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).apply {
+                    timeZone = TimeZone.getTimeZone("UTC")
+                }.format(Date(nowMs))
+                "${report.workspaceId}_${stamp}_${UUID.randomUUID().toString().take(4)}"
+            }
             val reportJson = fileDataSource.encodeReport(report)
 
             val entity = AnalysisRunEntity(

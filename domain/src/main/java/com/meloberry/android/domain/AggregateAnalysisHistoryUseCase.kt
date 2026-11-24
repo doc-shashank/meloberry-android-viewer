@@ -18,11 +18,17 @@ class AggregateAnalysisHistoryUseCase @Inject constructor(
                     totalRuns = 0,
                     averageAccuracyPercent = 0.0,
                     averageDurationSec = 0.0,
-                    recurringWeakItems = emptyList()
+                    recurringWeakItems = emptyList(),
+                    gradedRunCount = 0
                 )
             }
 
-            val avgAcc = runs.map { it.report.summary.mcqAccuracyPercent }.average()
+            val gradedRuns = runs.filter { it.report.summary.mcqTotal > 0 }
+            val avgAcc = if (gradedRuns.isEmpty()) {
+                0.0
+            } else {
+                gradedRuns.map { it.report.summary.mcqAccuracyPercent }.average()
+            }
             val avgDurSec = runs.map { it.report.totalDurationMs / 1000.0 }.average()
 
             val weakCounts = LinkedHashMap<String, Int>()
@@ -46,7 +52,8 @@ class AggregateAnalysisHistoryUseCase @Inject constructor(
                 totalRuns = runs.size,
                 averageAccuracyPercent = avgAcc,
                 averageDurationSec = avgDurSec,
-                recurringWeakItems = recurring
+                recurringWeakItems = recurring,
+                gradedRunCount = gradedRuns.size
             )
         }
 }
