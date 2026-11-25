@@ -409,6 +409,7 @@ class SessionPlayerViewModelTest {
         advanceUntilIdle()
         assertEquals(true, vm.uiState.value.fillBlankStates["Q_Fb1"]?.isCorrect)
         assertEquals(true, vm.uiState.value.fillBlankStates["Q_Fb1"]?.overriddenCorrect)
+        assertEquals(true, vm.uiState.value.fillBlankStates["Q_Fb1"]?.overriddenQuestion)
 
         // AssertionReason correct first try
         vm.onSelectAssertionReason("Q_Ar1", "both-explain")
@@ -699,6 +700,136 @@ class SessionPlayerViewModelTest {
         assertTrue(vm2.uiState.value.completedMarkdown!!.contains("| 2 | `Q_SeFix` | spot-error |"))
         assertTrue(vm2.uiState.value.completedMarkdown!!.contains("| 4 | `Q_DiffFill` | diff |"))
         assertTrue(vm2.uiState.value.completedMarkdown!!.contains("| 9 | `Q_RelRecall` | relabel |"))
+
+        job2.cancel()
+    }
+
+    @Test
+    fun fillBlankPartialOverride_liveEditReset_andFinishScreenProcessDeathPreservesTimestamps() = runTest(testDispatcher) {
+        var currentTimeMs = 1_000L
+        val workspace = StudyWorkspace(
+            id = "Set_V2_Regressions",
+            title = "Regression Checks",
+            kind = WorkspaceKind.QUIZ,
+            subType = "mixed",
+            activeComponentId = null,
+            components = emptyList(),
+            standaloneQuestions = listOf(
+                FillBlankQuestionModel(
+                    id = "Q_FbMulti",
+                    index = 1,
+                    payload = FillBlankPayload(
+                        template = "{{alpha}} and {{beta}}",
+                        blanks = listOf(
+                            FillBlankSlot(1, listOf("alpha")),
+                            FillBlankSlot(2, listOf("beta"))
+                        )
+                    ),
+                    layoutOverrides = emptyMap()
+                ),
+                SpotErrorQuestionModel(
+                    id = "Q_SeReg",
+                    index = 2,
+                    payload = SpotErrorPayload(
+                        template = "[Wrong]",
+                        segments = listOf(SpotErrorSegment(1, "Wrong", isCandidate = true, isError = true)),
+                        requireFix = false,
+                        allowNoError = false,
+                        noError = false
+                    ),
+                    layoutOverrides = emptyMap()
+                )
+            ),
+            globalLayouts = emptyMap(),
+            storageDirPath = "/tmp/Set_V2_Regressions"
+        )
+        val fakeWorkspaceRepo = FakeWorkspaceRepository(workspace)
+        val fakeAnalysisRepo = FakeAnalysisRepository()
+        val savedStateHandle = SavedStateHandle(mapOf("workspaceId" to "Set_V2_Regressions"))
+
+        val vm1 = SessionPlayerViewModel(
+            savedStateHandle = savedStateHandle,
+            workspaceRepository = fakeWorkspaceRepo,
+            analysisRepository = fakeAnalysisRepo,
+            buildSlideDeckUseCase = BuildSlideDeckUseCase(testDispatcher),
+            evaluateMcqAnswerUseCase = EvaluateMcqAnswerUseCase(),
+            buildAnalysisReportUseCase = BuildAnalysisReportUseCase(testDispatcher),
+            nowMs = { currentTimeMs }
+        )
+        val job1 = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            vm1.uiState.collect {}
+        }
+        advanceUntilIdle()
+
+        vm1.onStartSession()
+
+        // 1. Partial per-slot override on multi-blank: slot 1 overridden, slot 2 still wrong -> overriddenCorrect must stay false while isCorrect == false
+        vm1.onUpdateFillBlankInput("Q_FbMulti", 1, "wrong1")
+        vm1.onUpdateFillBlankInput("Q_FbMulti", 2, "wrong2")
+        vm1.onCheckFillBlank("Q_FbMulti")
+        vm1.onOverrideFillBlankSlot("Q_FbMulti", 1)
+        advanceUntilIdle()
+        val partialState = vm1.uiState.value.fillBlankStates["Q_FbMulti"]!!
+        assertEquals(false, partialState.isCorrect)
+        assertEquals(false, partialState.overriddenCorrect)
+        assertEquals(false, partialState.overriddenQuestion)
+        assertEquals(setOf(1), partialState.overriddenSlotIndices)
+
+        // 2. Whole-question override sets overriddenQuestion = true even when overriddenSlotIndices is non-empty
+        vm1.onOverrideFillBlankCorrect("Q_FbMulti")
+        advanceUntilIdle()
+        val wholeOverrideState = vm1.uiState.value.fillBlankStates["Q_FbMulti"]!!
+        assertEquals(true, wholeOverrideState.isCorrect)
+        assertEquals(true, wholeOverrideState.overriddenQuestion)
+        assertEquals(true, wholeOverrideState.overriddenCorrect)
+
+        // 3. Editing slot 1 clears isChecked, overriddenQuestion, overriddenCorrect, and removes slot 1 from overriddenSlotIndices
+        vm1.onUpdateFillBlankInput("Q_FbMulti", 1, "edited")
+        advanceUntilIdle()
+        val afterEditState = vm1.uiState.value.fillBlankStates["Q_FbMulti"]!!
+        assertEquals(false, afterEditState.isChecked)
+        assertEquals(false, afterEditState.overriddenQuestion)
+        assertEquals(false, afterEditState.overriddenCorrect)
+        assertTrue(afterEditState.overriddenSlotIndices.isEmpty())
+
+        // 4. Editing SpotError after checking resets isChecked = false
+        vm1.onToggleSpotErrorSpan("Q_SeReg", 1)
+        vm1.onCheckSpotError("Q_SeReg")
+        advanceUntilIdle()
+        assertEquals(true, vm1.uiState.value.spotErrorStates["Q_SeReg"]?.isChecked)
+        vm1.onToggleSpotErrorSpan("Q_SeReg", 1)
+        advanceUntilIdle()
+        assertEquals(false, vm1.uiState.value.spotErrorStates["Q_SeReg"]?.isChecked)
+
+        // 5. Finish at t=5_000ms, then restore after process death at t=99_000ms -> completedAtUtc and totalDurationMs must stay at t=5_000ms
+        currentTimeMs = 5_000L
+        vm1.onFinishAndAnalyze()
+        advanceUntilIdle()
+        val originalReport = vm1.uiState.value.completedReport!!
+        assertEquals(4_000L, originalReport.totalDurationMs)
+        val originalCompletedAtUtc = originalReport.completedAtUtc
+
+        currentTimeMs = 99_000L
+        vm1.onPauseTelemetry()
+        job1.cancel()
+
+        val vm2 = SessionPlayerViewModel(
+            savedStateHandle = savedStateHandle,
+            workspaceRepository = fakeWorkspaceRepo,
+            analysisRepository = fakeAnalysisRepo,
+            buildSlideDeckUseCase = BuildSlideDeckUseCase(testDispatcher),
+            evaluateMcqAnswerUseCase = EvaluateMcqAnswerUseCase(),
+            buildAnalysisReportUseCase = BuildAnalysisReportUseCase(testDispatcher),
+            nowMs = { currentTimeMs }
+        )
+        val job2 = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            vm2.uiState.collect {}
+        }
+        advanceUntilIdle()
+
+        val restoredReport = vm2.uiState.value.completedReport!!
+        assertEquals(4_000L, restoredReport.totalDurationMs)
+        assertEquals(originalCompletedAtUtc, restoredReport.completedAtUtc)
 
         job2.cancel()
     }

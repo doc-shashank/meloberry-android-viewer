@@ -134,7 +134,16 @@ fun PendingDocumentExportEffect(
                 "text/markdown", "text/plain" -> "text/plain"
                 else -> pendingExport.mimeType.ifBlank { "text/plain" }
             }
-            createDocumentLauncher.launch(pendingExport.suggestedFileName to effectiveMime)
+            val launched = runCatching {
+                createDocumentLauncher.launch(pendingExport.suggestedFileName to effectiveMime)
+            }.isSuccess
+            if (!launched) {
+                pendingCacheFilePath?.let { runCatching { File(it).delete() } }
+                pendingInlineContent = null
+                pendingCacheFilePath = null
+                awaitingDocumentResult = false
+                onExportConsumed()
+            }
         }
     }
 }

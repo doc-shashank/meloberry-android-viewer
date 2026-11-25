@@ -97,7 +97,12 @@ internal fun AnalysisSummaryCard(
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 StatBox("GRADED SCORE", "${report.summary.mcqCorrectFinal} / ${report.summary.mcqTotal}", Modifier.weight(1f))
-                StatBox("ACCURACY", String.format(Locale.US, "%.1f%%", report.summary.mcqAccuracyPercent), Modifier.weight(1f))
+                val accuracyText = if (report.summary.mcqTotal > 0) {
+                    String.format(Locale.US, "%.1f%%", report.summary.mcqAccuracyPercent)
+                } else {
+                    "—"
+                }
+                StatBox("ACCURACY", accuracyText, Modifier.weight(1f))
             }
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 StatBox("FLASHCARDS KNOWN", "${report.summary.flashcardKnown} / ${report.summary.flashcardTotal}", Modifier.weight(1f))

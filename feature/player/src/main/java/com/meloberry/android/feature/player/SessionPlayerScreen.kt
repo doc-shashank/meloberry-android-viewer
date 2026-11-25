@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -64,7 +65,6 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
@@ -398,14 +398,6 @@ fun SessionPlayerScreen(
                     } else {
                         false
                     }
-                }
-                .onKeyEvent { ev ->
-                    if (ev.type == KeyEventType.KeyDown && ev.key == Key.Slash && !showSearchModal) {
-                        showSearchModal = true
-                        true
-                    } else {
-                        false
-                    }
                 },
             containerColor = palette.background,
             snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -610,15 +602,23 @@ fun SessionPlayerScreen(
             ) { pageIndex ->
                 val slideScrollState = rememberScrollState()
                 val scrollScope = rememberCoroutineScope()
+                val currentPageSlide = uiState.slides[pageIndex]
+                val nestedQuizQIdx = (currentPageSlide as? SlideUiModel.QuizSlide)?.let {
+                    uiState.activeQuizQuestionIndex[it.id] ?: 0
+                }
+                LaunchedEffect(pageIndex, nestedQuizQIdx) {
+                    slideScrollState.scrollTo(0)
+                }
                 Box(modifier = Modifier.fillMaxSize()) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
+                            .imePadding()
                             .verticalScroll(slideScrollState)
                             .padding(horizontal = 16.dp, vertical = 20.dp),
                         contentAlignment = Alignment.TopCenter
                     ) {
-                        when (val slide = uiState.slides[pageIndex]) {
+                        when (val slide = currentPageSlide) {
                             is SlideUiModel.ArticleSlide -> ArticleSlideCard(slide = slide)
                             is SlideUiModel.QuizSlide -> QuizBundleSlideContent(
                                 quizSlide = slide,

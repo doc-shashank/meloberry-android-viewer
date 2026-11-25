@@ -354,8 +354,13 @@ private fun RunHistoryCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    val gradedLabel = if (summary.mcqTotal > 0) {
+                        "Graded: ${summary.mcqCorrectFinal}/${summary.mcqTotal} (${String.format(Locale.US, "%.1f%%", summary.mcqAccuracyPercent)})"
+                    } else {
+                        "Graded: —"
+                    }
                     Text(
-                        text = "Graded: ${summary.mcqCorrectFinal}/${summary.mcqTotal} (${String.format(Locale.US, "%.1f%%", summary.mcqAccuracyPercent)}) • Flashcards: ${summary.flashcardKnown}/${summary.flashcardTotal}",
+                        text = "$gradedLabel • Flashcards: ${summary.flashcardKnown}/${summary.flashcardTotal}",
                         color = palette.muted,
                         fontSize = 13.sp
                     )

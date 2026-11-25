@@ -15,10 +15,12 @@ internal object ImageAssetVerifier {
     const val MAX_SVG_BYTES: Long = 5L * 1024L * 1024L
     private const val HEADER_PROBE_BYTES = 16
 
-    private val DANGEROUS_SVG_REGEX = Regex(
-        """<\s*(?:script|foreignObject)\b|\bon[a-z]+\s*=|(?:javascript|vbscript)\s*:|data\s*:\s*text/html""",
+    private val DANGEROUS_SVG_GLOBAL_REGEX = Regex(
+        """<\s*(?:script|foreignObject)\b|(?:javascript|vbscript)\s*:|data\s*:\s*text/html""",
         RegexOption.IGNORE_CASE
     )
+    private val SVG_TAG_REGEX = Regex("""<[^>]+>""")
+    private val SVG_EVENT_ATTR_REGEX = Regex("""(?:\s|/|"|')on[a-z]+\s*=""", RegexOption.IGNORE_CASE)
 
     fun isValidSafeImage(file: File): Boolean {
         if (!file.isFile) return false
@@ -120,7 +122,12 @@ internal object ImageAssetVerifier {
         val probe = if (fullText.length > 1024) fullText.substring(0, 1024) else fullText
         val looksLikeSvg = probe.startsWith("<svg", ignoreCase = true) ||
             (probe.startsWith("<?xml", ignoreCase = true) && probe.contains("<svg", ignoreCase = true))
-        return looksLikeSvg && !DANGEROUS_SVG_REGEX.containsMatchIn(fullText)
+        if (!looksLikeSvg) return false
+        if (DANGEROUS_SVG_GLOBAL_REGEX.containsMatchIn(fullText)) return false
+        val hasEventAttr = SVG_TAG_REGEX.findAll(fullText).any { tagMatch ->
+            SVG_EVENT_ATTR_REGEX.containsMatchIn(tagMatch.value)
+        }
+        return !hasEventAttr
     }
 
     private fun decodeStrictUtf8(bytes: ByteArray): String? = runCatching {

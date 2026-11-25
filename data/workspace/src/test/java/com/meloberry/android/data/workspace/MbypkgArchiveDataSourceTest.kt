@@ -423,10 +423,16 @@ class MbypkgArchiveDataSourceTest {
         assertTrue(ImageAssetVerifier.isValidSafeImage("RIFF\u0000\u0000\u0000\u0000WEBP".encodeToByteArray()))
         assertTrue(ImageAssetVerifier.isValidSafeImage("BM".encodeToByteArray()))
         assertTrue(ImageAssetVerifier.isValidSafeImage("<svg xmlns='http://www.w3.org/2000/svg'><circle r='5'/></svg>".encodeToByteArray()))
+        assertTrue(
+            ImageAssetVerifier.isValidSafeImage(
+                "<svg xmlns='http://www.w3.org/2000/svg'><text>onset = 2h, one = 1, only = true</text></svg>".encodeToByteArray()
+            )
+        )
 
         assertFalse(ImageAssetVerifier.isValidSafeImage("not an image".encodeToByteArray()))
         assertFalse(ImageAssetVerifier.isValidSafeImage("<svg><script>alert(1)</script></svg>".encodeToByteArray()))
         assertFalse(ImageAssetVerifier.isValidSafeImage("<svg onload='alert(1)'></svg>".encodeToByteArray()))
+        assertFalse(ImageAssetVerifier.isValidSafeImage("<svg><g onmouseover=\"evil()\"/></svg>".encodeToByteArray()))
 
         val dispatcher = StandardTestDispatcher(testScheduler)
         val archiveSource = MbypkgArchiveDataSource(dispatcher)
@@ -453,6 +459,19 @@ class MbypkgArchiveDataSourceTest {
         assertTrue(
             runCatching {
                 archiveSource.extractAndParse(ByteArrayInputStream(outsideAssetsPkg)) { id -> File(tempFolder.root, id) }
+            }.isFailure
+        )
+
+        // Differentiation fill question with zero blanks must be rejected
+        val emptyDiffFillPkg = buildZip(
+            listOf(
+                "manifest.json" to """{"packageVersion":"2.0","kind":"quiz","id":"Set_EmptyDiffFill","assets":[]}""".encodeToByteArray(),
+                "workspace.json" to """{"id":"Set_EmptyDiffFill","quizType":"Mixed","questions":[{"id":"Q_1","index":1,"questionType":"Differentiation","payloadJson":"{\"mode\":\"fill\",\"headers\":[\"Feature\",\"A\"],\"rows\":[[\"X\",\"Y\"]],\"specialCells\":[]}"}]}""".encodeToByteArray()
+            )
+        )
+        assertTrue(
+            runCatching {
+                archiveSource.extractAndParse(ByteArrayInputStream(emptyDiffFillPkg)) { id -> File(tempFolder.root, id) }
             }.isFailure
         )
     }

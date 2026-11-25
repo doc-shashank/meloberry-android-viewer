@@ -90,6 +90,13 @@ class GradingEngineV2Test {
         val pair = listOf("1", "2")
         val shuffledPair = DeterministicShuffler.deterministicShuffle(pair, "any-seed") { it }
         assertEquals(listOf("2", "1"), shuffledPair)
+
+        // Duplicate leading keys must still swap with a distinct element when Fisher-Yates hits identity
+        val duplicateLeading = listOf("Positive", "Positive", "Negative")
+        for (seedIdx in 0 until 64) {
+            val res = DeterministicShuffler.deterministicShuffle(duplicateLeading, "dup-seed-$seedIdx") { it }
+            assertNotEquals(duplicateLeading, res)
+        }
     }
 
     @Test

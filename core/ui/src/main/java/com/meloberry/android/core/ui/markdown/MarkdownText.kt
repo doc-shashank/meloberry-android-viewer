@@ -560,6 +560,21 @@ private fun AnnotatedString.Builder.appendInlineSegment(
                     i++
                 }
             }
+            text.startsWith("$$", i) -> {
+                val close = MarkdownMathParser.findClosingDisplayMath(text, i)
+                if (close > i + 2) {
+                    val tex = text.substring(i + 2, close).trim()
+                    if (tex.isNotEmpty()) {
+                        val mathId = "math_${formulas.size}"
+                        formulas[mathId] = tex
+                        appendInlineContent(mathId, tex)
+                    }
+                    i = close + 2
+                } else {
+                    append("$$")
+                    i += 2
+                }
+            }
             text[i] == '$' -> {
                 val close = MarkdownMathParser.findClosingInlineMath(text, i)
                 if (close > i + 1) {

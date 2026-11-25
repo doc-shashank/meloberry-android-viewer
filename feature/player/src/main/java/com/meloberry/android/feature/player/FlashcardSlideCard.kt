@@ -155,6 +155,7 @@ private fun SideText(side: FlashcardSideModel, layout: ResolvedSlideLayout) {
         MarkdownText(
             markdown = side.text.orEmpty(),
             baseFontSizeSp = layout.bodyFontSizeSp,
+            promptFontSizeSp = layout.promptFontSizeSp,
             contentAlign = layout.contentAlign
         )
     }

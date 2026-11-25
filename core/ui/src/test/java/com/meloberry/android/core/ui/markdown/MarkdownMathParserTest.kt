@@ -30,6 +30,12 @@ class MarkdownMathParserTest {
 
         val escaped = "Literal \\\$x\\\$"
         assertEquals(-1, MarkdownMathParser.findClosingInlineMath(escaped, escaped.indexOf('$')))
+
+        // Inline display-math delimiter $$...$$ inside paragraph/cell text
+        val inlineDisplay = "Energy is \$\$E = mc^2\$\$ in rest frame."
+        val displayOpen = inlineDisplay.indexOf("\$\$")
+        val displayClose = MarkdownMathParser.findClosingDisplayMath(inlineDisplay, displayOpen)
+        assertEquals("E = mc^2", inlineDisplay.substring(displayOpen + 2, displayClose))
     }
 
     @Test

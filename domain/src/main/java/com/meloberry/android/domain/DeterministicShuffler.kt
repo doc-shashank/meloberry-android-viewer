@@ -38,9 +38,12 @@ object DeterministicShuffler {
                 }
             }
             if (same) {
-                val tmp = out[0]
-                out[0] = out[1]
-                out[1] = tmp
+                val swapIdx = out.indexOfFirst { keyFn(it) != keyFn(out[0]) }
+                if (swapIdx > 0) {
+                    val tmp = out[0]
+                    out[0] = out[swapIdx]
+                    out[swapIdx] = tmp
+                }
             }
         }
 

@@ -712,6 +712,11 @@ internal class MbypkgArchiveDataSource @Inject constructor(
                 "Differentiation question '$questionId' specialCell (${cell.rowIndex}, ${cell.colIndex}) is out of table bounds."
             }
         }
+        if (normMode == "fill") {
+            require(payload.specialCells.any { it.isBlank && !it.blankAnswers.isNullOrEmpty() }) {
+                "Differentiation fill question '$questionId' must contain at least one blank cell."
+            }
+        }
         val normalizedAlignments = if (payload.alignments.isEmpty()) {
             List(colCount) { "left" }
         } else {

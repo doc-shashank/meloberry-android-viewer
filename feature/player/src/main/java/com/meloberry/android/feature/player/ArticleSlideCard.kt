@@ -232,6 +232,14 @@ internal fun InteractiveTableBlockCard(
     var hiddenCols by remember(blockId, hideableZeroBased) { mutableStateOf(hideableZeroBased) }
     var peekedCells by remember(blockId) { mutableStateOf(emptySet<Pair<Int, Int>>()) }
 
+    fun toggleColumnHidden(colIdx: Int) {
+        val wasHidden = colIdx in hiddenCols
+        hiddenCols = if (wasHidden) hiddenCols - colIdx else hiddenCols + colIdx
+        if (!wasHidden) {
+            peekedCells = peekedCells.filterNot { it.second == colIdx }.toSet()
+        }
+    }
+
     val colWidths: List<Dp> = remember(table, cellFontSize) {
         List(colCount) { col ->
             val maxChars = maxOf(
@@ -282,12 +290,7 @@ internal fun InteractiveTableBlockCard(
                         border = BorderStroke(1.dp, if (isHidden) palette.accent else palette.border),
                         modifier = Modifier
                             .clip(RoundedCornerShape(999.dp))
-                            .clickable {
-                                hiddenCols = if (isHidden) hiddenCols - colIdx else hiddenCols + colIdx
-                                if (!isHidden) {
-                                    peekedCells = peekedCells.filterNot { it.second == colIdx }.toSet()
-                                }
-                            }
+                            .clickable { toggleColumnHidden(colIdx) }
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
@@ -333,9 +336,7 @@ internal fun InteractiveTableBlockCard(
                         fontSizeSp = cellFontSize,
                         isHideable = 0 in hideableZeroBased,
                         isHidden = 0 in hiddenCols,
-                        onToggleHide = {
-                            hiddenCols = if (0 in hiddenCols) hiddenCols - 0 else hiddenCols + 0
-                        }
+                        onToggleHide = { toggleColumnHidden(0) }
                     )
                     Box(
                         modifier = Modifier
@@ -356,9 +357,7 @@ internal fun InteractiveTableBlockCard(
                                 fontSizeSp = cellFontSize,
                                 isHideable = c in hideableZeroBased,
                                 isHidden = c in hiddenCols,
-                                onToggleHide = {
-                                    hiddenCols = if (c in hiddenCols) hiddenCols - c else hiddenCols + c
-                                }
+                                onToggleHide = { toggleColumnHidden(c) }
                             )
                         }
                     }
@@ -373,12 +372,14 @@ internal fun InteractiveTableBlockCard(
                             .background(rowBg)
                     ) {
                         val coord0 = rowIdx to 0
+                        val col0Hidden = 0 in hiddenCols
                         TableBodyCell(
                             text = row.getOrNull(0).orEmpty(),
                             alignment = table.alignments.getOrNull(0),
                             width = colWidths[0],
                             fontSizeSp = cellFontSize,
-                            isMasked = (0 in hiddenCols) && (coord0 !in peekedCells),
+                            isInHiddenColumn = col0Hidden,
+                            isMasked = col0Hidden && (coord0 !in peekedCells),
                             onTogglePeek = {
                                 peekedCells = if (coord0 in peekedCells) peekedCells - coord0 else peekedCells + coord0
                             },
@@ -397,12 +398,14 @@ internal fun InteractiveTableBlockCard(
                         ) {
                             for (c in 1 until colCount) {
                                 val coord = rowIdx to c
+                                val colHidden = c in hiddenCols
                                 TableBodyCell(
                                     text = row.getOrNull(c).orEmpty(),
                                     alignment = table.alignments.getOrNull(c),
                                     width = colWidths[c],
                                     fontSizeSp = cellFontSize,
-                                    isMasked = (c in hiddenCols) && (coord !in peekedCells),
+                                    isInHiddenColumn = colHidden,
+                                    isMasked = colHidden && (coord !in peekedCells),
                                     onTogglePeek = {
                                         peekedCells = if (coord in peekedCells) peekedCells - coord else peekedCells + coord
                                     },
@@ -431,9 +434,7 @@ internal fun InteractiveTableBlockCard(
                                 fontSizeSp = cellFontSize,
                                 isHideable = c in hideableZeroBased,
                                 isHidden = c in hiddenCols,
-                                onToggleHide = {
-                                    hiddenCols = if (c in hiddenCols) hiddenCols - c else hiddenCols + c
-                                }
+                                onToggleHide = { toggleColumnHidden(c) }
                             )
                         }
                     }
@@ -447,12 +448,14 @@ internal fun InteractiveTableBlockCard(
                         ) {
                             for (c in 0 until colCount) {
                                 val coord = rowIdx to c
+                                val colHidden = c in hiddenCols
                                 TableBodyCell(
                                     text = row.getOrNull(c).orEmpty(),
                                     alignment = table.alignments.getOrNull(c),
                                     width = colWidths[c],
                                     fontSizeSp = cellFontSize,
-                                    isMasked = (c in hiddenCols) && (coord !in peekedCells),
+                                    isInHiddenColumn = colHidden,
+                                    isMasked = colHidden && (coord !in peekedCells),
                                     onTogglePeek = {
                                         peekedCells = if (coord in peekedCells) peekedCells - coord else peekedCells + coord
                                     },
@@ -527,6 +530,7 @@ private fun TableBodyCell(
     alignment: String?,
     width: Dp,
     fontSizeSp: Int,
+    isInHiddenColumn: Boolean,
     isMasked: Boolean,
     onTogglePeek: () -> Unit,
     isStickyCol: Boolean
@@ -541,7 +545,7 @@ private fun TableBodyCell(
         modifier = Modifier
             .width(width)
             .fillMaxHeight()
-            .let { if (isMasked) it.clickable(onClick = onTogglePeek) else it }
+            .let { if (isInHiddenColumn) it.clickable(onClick = onTogglePeek) else it }
             .padding(horizontal = 10.dp, vertical = 9.dp),
         contentAlignment = when (contentAlign) {
             ContentAlign.CENTER -> Alignment.Center

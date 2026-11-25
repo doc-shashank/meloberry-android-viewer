@@ -28,6 +28,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
@@ -316,7 +318,9 @@ internal fun DifferentiationSlideCard(
                                             onUpdateFillInput(rIdx, cIdx, it)
                                         },
                                         singleLine = true,
-                                        modifier = Modifier.fillMaxWidth(),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .onFocusChanged { if (it.isFocused) focusedBlankCoord = coord },
                                         placeholder = { Text("...", color = palette.muted, fontSize = 12.sp) },
                                         shape = RoundedCornerShape(8.dp),
                                         colors = OutlinedTextFieldDefaults.colors(
@@ -367,19 +371,31 @@ internal fun DifferentiationSlideCard(
                                     verticalArrangement = Arrangement.spacedBy(3.dp)
                                 ) {
                                     val showDiff = runtimeState.isChecked && spec?.isError == true
-                                    Text(
-                                        text = displayText,
-                                        color = if (showDiff) palette.bad else palette.text,
-                                        fontSize = cellFontSize.sp,
-                                        textDecoration = if (showDiff) TextDecoration.LineThrough else TextDecoration.None
-                                    )
-                                    if (showDiff && !spec?.corrections.isNullOrEmpty()) {
+                                    if (showDiff) {
                                         Text(
-                                            text = "→ ${spec!!.corrections!!.joinToString(" / ")}",
-                                            color = palette.ok,
-                                            fontSize = (cellFontSize - 1).coerceAtLeast(11).sp,
-                                            fontWeight = FontWeight.Bold
+                                            text = displayText,
+                                            color = palette.bad,
+                                            fontSize = cellFontSize.sp,
+                                            textDecoration = TextDecoration.LineThrough
                                         )
+                                    } else {
+                                        MarkdownText(
+                                            markdown = displayText,
+                                            baseFontSizeSp = cellFontSize,
+                                            contentAlign = align
+                                        )
+                                    }
+                                    if (showDiff && !spec?.corrections.isNullOrEmpty()) {
+                                        CompositionLocalProvider(
+                                            LocalMeloberryColors provides palette.copy(text = palette.ok)
+                                        ) {
+                                            MarkdownText(
+                                                markdown = "→ ${spec!!.corrections!!.joinToString(" / ")}",
+                                                baseFontSizeSp = (cellFontSize - 1).coerceAtLeast(11),
+                                                contentAlign = align,
+                                                isBoldByDefault = true
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -431,12 +447,16 @@ internal fun DifferentiationSlideCard(
                                         contentAlign = align
                                     )
                                     if (verdict == DiffCellVerdict.WRONG) {
-                                        Text(
-                                            text = "Expected: ${row.getOrNull(cIdx).orEmpty()}",
-                                            color = palette.ok,
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
+                                        CompositionLocalProvider(
+                                            LocalMeloberryColors provides palette.copy(text = palette.ok)
+                                        ) {
+                                            MarkdownText(
+                                                markdown = "Expected: ${row.getOrNull(cIdx).orEmpty()}",
+                                                baseFontSizeSp = 11,
+                                                contentAlign = align,
+                                                isBoldByDefault = true
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -462,7 +482,7 @@ internal fun DifferentiationSlideCard(
             }
         }
 
-        if (payload.mode == "spot-wrong" && payload.allowNoError) {
+        if (payload.mode == "spot-wrong" && (payload.allowNoError || payload.specialCells.none { it.isError })) {
             val picked = runtimeState.pickedNoError
             Surface(
                 shape = RoundedCornerShape(10.dp),

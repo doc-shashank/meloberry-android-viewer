@@ -46,7 +46,7 @@ internal class DefaultAnalysisRepository @Inject constructor(
     private val writeMutex = Mutex()
 
     override fun observeAllRuns(): Flow<List<SavedAnalysisRun>> = analysisRunDao.observeAll()
-        .map { entities -> entities.map { it.toSavedRun() } }
+        .map { entities -> entities.mapNotNull { runCatching { it.toSavedRun() }.getOrNull() } }
         .flowOn(ioDispatcher)
 
     override suspend fun saveCompletedRun(

@@ -1,7 +1,6 @@
 package com.meloberry.android.feature.player
 
 import android.graphics.BitmapFactory
-import android.os.Build
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -42,11 +41,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
@@ -67,21 +66,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import coil.ImageLoader
 import coil.compose.AsyncImage
-import coil.decode.GifDecoder
-import coil.decode.ImageDecoderDecoder
-import coil.decode.SvgDecoder
 import coil.request.ImageRequest
 import com.meloberry.android.core.model.RelabelBox
 import com.meloberry.android.core.model.RelabelImagePayload
 import com.meloberry.android.core.model.SlideUiModel
+import com.meloberry.android.core.ui.components.SharedSvgImageLoader
 import com.meloberry.android.core.ui.markdown.MarkdownText
 import com.meloberry.android.core.ui.theme.LocalMeloberryColors
 import com.meloberry.android.domain.DeterministicShuffler
 import com.meloberry.android.domain.EvaluateRelabelImageUseCase
 import com.meloberry.android.domain.RelabelBoxVerdict
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileInputStream
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -106,8 +105,10 @@ internal fun RelabelImageSlideCard(
     var focusedBoxIndex by remember(slide.id, payload.boxes) { mutableStateOf(payload.boxes.firstOrNull()?.index) }
     var isLightboxOpen by remember(slide.id) { mutableStateOf(false) }
 
-    val imageAspectRatio = remember(payload.imageFilePath) {
-        detectImageAspectRatio(payload.imageFilePath)
+    val imageAspectRatio by produceState(initialValue = 16f / 9f, key1 = payload.imageFilePath) {
+        value = withContext(Dispatchers.IO) {
+            detectImageAspectRatio(payload.imageFilePath)
+        }
     }
 
     val shuffledBank = remember(slide.id, payload.boxes, payload.distractors) {
@@ -372,6 +373,10 @@ internal fun RelabelImageSlideCard(
 
         if (runtimeState.isChecked) {
             val (msg, msgColor) = when {
+                payload.mode == "reveal" -> {
+                    if (runtimeState.rating == "known") "Marked as Got It." to palette.ok
+                    else "Marked as Needs Review." to palette.bad
+                }
                 runtimeState.overriddenCorrect -> "Marked correct (override)." to palette.ok
                 runtimeState.isCorrect == true && runtimeState.anyFuzzy -> "Correct (accepted fuzzy spelling match)." to palette.fuzzyAccent
                 runtimeState.isCorrect == true -> "All labels correct!" to palette.ok
@@ -429,18 +434,7 @@ private fun RelabelDiagramCanvas(
 ) {
     val context = LocalContext.current
     val palette = LocalMeloberryColors.current
-    val imageLoader = remember(context) {
-        ImageLoader.Builder(context.applicationContext)
-            .components {
-                add(SvgDecoder.Factory())
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    add(ImageDecoderDecoder.Factory())
-                } else {
-                    add(GifDecoder.Factory())
-                }
-            }
-            .build()
-    }
+    val imageLoader = remember(context) { SharedSvgImageLoader.get(context) }
     val model = remember(payload.imageFilePath, context) {
         ImageRequest.Builder(context)
             .data(File(payload.imageFilePath))
@@ -578,16 +572,27 @@ private fun RelabelMaskOverlay(
                     Box(modifier = Modifier.fillMaxSize().border(2.dp, borderColor, RoundedCornerShape(6.dp)))
                 }
                 "blur" -> {
-                    val blurMod = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                        Modifier.blur(8.dp)
-                    } else {
-                        Modifier
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(palette.surface.copy(alpha = 0.95f))
+                    )
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val step = 10.dp.toPx()
+                        var x = -size.height
+                        while (x < size.width + size.height) {
+                            drawLine(
+                                color = palette.muted.copy(alpha = 0.22f),
+                                start = Offset(x, 0f),
+                                end = Offset(x + size.height, size.height),
+                                strokeWidth = 1.5.dp.toPx()
+                            )
+                            x += step
+                        }
                     }
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .then(blurMod)
-                            .background(palette.surface.copy(alpha = 0.84f))
                             .border(2.dp, borderColor, RoundedCornerShape(6.dp))
                     )
                 }
@@ -734,13 +739,27 @@ private fun detectImageAspectRatio(filePath: String): Float {
     if (!file.isFile) return 16f / 9f
     if (file.extension.equals("svg", ignoreCase = true)) {
         runCatching {
-            val head = file.readText(Charsets.UTF_8).take(1024)
-            val vbMatch = Regex("viewBox\\s*=\\s*[\"']\\s*[0-9.+-]+\\s+[0-9.+-]+\\s+([0-9.]+)\\s+([0-9.]+)\\s*[\"']", RegexOption.IGNORE_CASE)
-                .find(head)
-            if (vbMatch != null) {
-                val w = vbMatch.groupValues[1].toFloatOrNull() ?: 0f
-                val h = vbMatch.groupValues[2].toFloatOrNull() ?: 0f
-                if (w > 0f && h > 0f) return w / h
+            val buf = ByteArray(2048)
+            val bytesRead = FileInputStream(file).use { input ->
+                var total = 0
+                while (total < buf.size) {
+                    val r = input.read(buf, total, buf.size - total)
+                    if (r <= 0) break
+                    total += r
+                }
+                total
+            }
+            if (bytesRead > 0) {
+                val head = String(buf, 0, bytesRead, Charsets.UTF_8)
+                val vbMatch = Regex(
+                    """viewBox\s*=\s*["']\s*[0-9.+-]+[\s,]+[0-9.+-]+[\s,]+([0-9.]+)[\s,]+([0-9.]+)\s*["']""",
+                    RegexOption.IGNORE_CASE
+                ).find(head)
+                if (vbMatch != null) {
+                    val w = vbMatch.groupValues[1].toFloatOrNull() ?: 0f
+                    val h = vbMatch.groupValues[2].toFloatOrNull() ?: 0f
+                    if (w > 0f && h > 0f) return w / h
+                }
             }
         }
         return 16f / 9f

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -55,6 +56,7 @@ internal data class SessionSearchEntry(
     val quizQuestionIndex: Int?,
     val kindLabel: String,
     val title: String,
+    val previewText: String,
     val searchableText: String
 )
 
@@ -65,6 +67,15 @@ internal data class SessionSearchMatch(
 )
 
 internal object SessionSearchIndex {
+
+    private val FILL_BLANK_TOKEN_REGEX = Regex("""\{\{[^{}]*\}\}""")
+    private val SPOT_ERROR_MARKUP_REGEX = Regex("""\[~~(.*?)~~\s*->\s*[^\]]*\]""")
+
+    internal fun sanitizeAnswerMarkup(raw: String): String = raw
+        .replace(SPOT_ERROR_MARKUP_REGEX, "$1")
+        .replace(FILL_BLANK_TOKEN_REGEX, "[blank]")
+        .replace(Regex("\\s+"), " ")
+        .trim()
 
     fun build(slides: List<SlideUiModel>): List<SessionSearchEntry> {
         val entries = mutableListOf<SessionSearchEntry>()
@@ -96,6 +107,7 @@ internal object SessionSearchIndex {
                             }
                         }
                     }
+                    val normalized = parts.joinToString(" ").replace(Regex("\\s+"), " ").trim()
                     entries += SessionSearchEntry(
                         id = slide.id,
                         outerSlideIndex = outerIdx,
@@ -103,7 +115,8 @@ internal object SessionSearchIndex {
                         quizQuestionIndex = null,
                         kindLabel = "ARTICLE",
                         title = slide.title?.takeIf { it.isNotBlank() } ?: "Article #${outerIdx + 1}",
-                        searchableText = parts.joinToString(" ").replace(Regex("\\s+"), " ").trim()
+                        previewText = normalized,
+                        searchableText = normalized
                     )
                 }
                 is SlideUiModel.QuizSlide -> {
@@ -138,7 +151,7 @@ internal object SessionSearchIndex {
             return entries.map { entry ->
                 SessionSearchMatch(
                     entry = entry,
-                    snippet = entry.searchableText.take(120),
+                    snippet = entry.previewText.take(120),
                     score = 0
                 )
             }
@@ -168,7 +181,7 @@ internal object SessionSearchIndex {
 
             SessionSearchMatch(
                 entry = entry,
-                snippet = extractSnippet(entry.searchableText, tokens),
+                snippet = extractSnippet(entry.previewText, tokens),
                 score = score
             )
         }.sortedByDescending { it.score }
@@ -181,53 +194,64 @@ internal object SessionSearchIndex {
         quizQuestionIdx: Int?,
         titlePrefix: String
     ): SessionSearchEntry {
-        val (kindLabel, titleSuffix, parts) = when (qSlide) {
+        val (kindLabel, titleSuffix, previewParts, searchParts) = when (qSlide) {
             is SlideUiModel.McqSlide -> {
                 val q = qSlide.question
-                val p = buildList {
+                val preview = buildList {
                     add(q.promptText)
                     q.options.forEach { it.text?.let(::add) }
-                    q.explanation?.let(::add)
                 }
-                Triple("MCQ", q.promptText.take(64), p)
+                val search = preview + listOfNotNull(q.explanation)
+                Quad("MCQ", q.promptText.take(64), preview, search)
             }
             is SlideUiModel.FlashcardSlide -> {
                 val q = qSlide.question
-                val p = listOfNotNull(q.front.text, q.back.text)
-                Triple("FLASHCARD", (q.front.text ?: q.back.text ?: "Flashcard").take(64), p)
+                val frontPrompt = q.front.text?.takeIf { it.isNotBlank() } ?: "Flashcard"
+                val preview = listOf(frontPrompt)
+                val search = listOfNotNull(q.front.text, q.back.text)
+                Quad("FLASHCARD", frontPrompt.take(64), preview, search)
             }
             is SlideUiModel.FillBlankSlide -> {
                 val pl = qSlide.question.payload
-                val p = buildList {
-                    add(pl.template)
+                val sanitizedTemplate = sanitizeAnswerMarkup(pl.template)
+                val preview = listOf(sanitizedTemplate)
+                val search = buildList {
+                    add(sanitizedTemplate)
                     pl.blanks.forEach { addAll(it.answers) }
                     pl.explanation?.let(::add)
                 }
-                Triple("FILL BLANK", pl.template.take(64), p)
+                Quad("FILL BLANK", sanitizedTemplate.take(64), preview, search)
             }
             is SlideUiModel.AssertionReasonSlide -> {
                 val pl = qSlide.question.payload
-                val p = listOfNotNull(pl.assertion, pl.reason, pl.explanation)
-                Triple("ASSERTION-REASON", pl.assertion.take(64), p)
+                val preview = listOf(pl.assertion, pl.reason)
+                val search = preview + listOfNotNull(pl.explanation)
+                Quad("ASSERTION-REASON", pl.assertion.take(64), preview, search)
             }
             is SlideUiModel.SpotErrorSlide -> {
                 val pl = qSlide.question.payload
-                val p = buildList {
-                    add(pl.template)
+                val sanitizedTemplate = sanitizeAnswerMarkup(pl.template)
+                val preview = listOf(sanitizedTemplate)
+                val search = buildList {
+                    add(sanitizedTemplate)
                     pl.segments.forEach { seg ->
                         add(seg.text)
                         seg.corrections?.let(::addAll)
                     }
                     pl.explanation?.let(::add)
                 }
-                Triple("SPOT ERROR", pl.template.take(64), p)
+                Quad("SPOT ERROR", sanitizedTemplate.take(64), preview, search)
             }
             is SlideUiModel.DifferentiationSlide -> {
                 val pl = qSlide.question.payload
-                val p = buildList {
+                val sanitizedRows = pl.rows.flatMap { row -> row.map(::sanitizeAnswerMarkup) }
+                val preview = buildList {
                     pl.title?.let(::add)
                     addAll(pl.headers)
-                    pl.rows.forEach { addAll(it) }
+                    addAll(sanitizedRows)
+                }
+                val search = buildList {
+                    addAll(preview)
                     pl.specialCells.forEach { sc ->
                         sc.blankAnswers?.let(::addAll)
                         sc.wrongText?.let(::add)
@@ -235,20 +259,25 @@ internal object SessionSearchIndex {
                     }
                     pl.explanation?.let(::add)
                 }
-                Triple("DIFFERENTIATION", (pl.title ?: pl.headers.joinToString(" vs ")).take(64), p)
+                Quad("DIFFERENTIATION", (pl.title ?: pl.headers.joinToString(" vs ")).take(64), preview, search)
             }
             is SlideUiModel.MechanismSlide -> {
                 val pl = qSlide.question.payload
-                val p = buildList {
+                val safeTitle = pl.title?.takeIf { it.isNotBlank() } ?: "Mechanism (${pl.steps.size} steps)"
+                val preview = listOf(safeTitle)
+                val search = buildList {
                     pl.title?.let(::add)
                     pl.steps.forEach { add(it.text) }
                     pl.explanation?.let(::add)
                 }
-                Triple("MECHANISM", (pl.title ?: pl.steps.firstOrNull()?.text ?: "Mechanism").take(64), p)
+                Quad("MECHANISM", safeTitle.take(64), preview, search)
             }
             is SlideUiModel.RelabelImageSlide -> {
                 val pl = qSlide.question.payload
-                val p = buildList {
+                val safePrompt = pl.prompt?.takeIf { it.isNotBlank() }
+                    ?: "Label ${pl.boxes.size} diagram region(s)"
+                val preview = listOf(safePrompt)
+                val search = buildList {
                     pl.prompt?.let(::add)
                     pl.boxes.forEach { box ->
                         add(box.label)
@@ -257,7 +286,7 @@ internal object SessionSearchIndex {
                     addAll(pl.distractors)
                     pl.explanation?.let(::add)
                 }
-                Triple("RELABEL IMAGE", (pl.prompt ?: pl.boxes.joinToString(", ") { it.label }).take(64), p)
+                Quad("RELABEL IMAGE", safePrompt.take(64), preview, search)
             }
         }
         val cleanTitle = "$titlePrefix — ${titleSuffix.replace('\n', ' ').trim()}"
@@ -268,9 +297,17 @@ internal object SessionSearchIndex {
             quizQuestionIndex = quizQuestionIdx,
             kindLabel = kindLabel,
             title = cleanTitle,
-            searchableText = parts.joinToString(" ").replace(Regex("\\s+"), " ").trim()
+            previewText = previewParts.joinToString(" ").replace(Regex("\\s+"), " ").trim(),
+            searchableText = searchParts.joinToString(" ").replace(Regex("\\s+"), " ").trim()
         )
     }
+
+    private data class Quad(
+        val first: String,
+        val second: String,
+        val third: List<String>,
+        val fourth: List<String>
+    )
 
     private fun extractSnippet(raw: String, tokens: List<String>): String {
         if (raw.length <= 130) return raw
@@ -306,6 +343,7 @@ internal fun SessionSearchModal(
     ) {
         Surface(
             modifier = Modifier
+                .imePadding()
                 .fillMaxWidth(0.94f)
                 .heightIn(max = 580.dp),
             shape = RoundedCornerShape(18.dp),
@@ -469,11 +507,15 @@ private fun highlightSnippet(
     return buildAnnotatedString {
         var cursor = 0
         for (r in merged) {
-            if (r.first > cursor) append(text.substring(cursor, r.first))
-            withStyle(SpanStyle(color = highlightColor, background = highlightBg, fontWeight = FontWeight.Bold)) {
-                append(text.substring(r.first, r.last + 1))
+            val start = r.first.coerceIn(0, text.length)
+            val endExclusive = (r.last + 1).coerceIn(start, text.length)
+            if (start > cursor) append(text.substring(cursor, start))
+            if (endExclusive > start) {
+                withStyle(SpanStyle(color = highlightColor, background = highlightBg, fontWeight = FontWeight.Bold)) {
+                    append(text.substring(start, endExclusive))
+                }
             }
-            cursor = r.last + 1
+            cursor = endExclusive
         }
         if (cursor < text.length) append(text.substring(cursor))
     }

@@ -24,13 +24,14 @@ import com.meloberry.android.core.model.SpotErrorQuestionModel
 import com.meloberry.android.core.model.SpotErrorSegment
 import com.meloberry.android.core.model.TableBlockPayload
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SessionSearchAndFormattingTest {
 
     @Test
-    fun sessionSearchIndex_indexesCalloutsTablesAndAllV2QuestionTypesWithNestedQuizTargets() {
+    fun sessionSearchIndex_indexesCalloutsTablesAndAllV2QuestionTypesWithNestedQuizTargets_withoutSpoilingAnswers() {
         val layout = ResolvedSlideLayout()
         val slides: List<SlideUiModel> = listOf(
             SlideUiModel.ArticleSlide(
@@ -153,6 +154,17 @@ class SessionSearchAndFormattingTest {
         val entries = SessionSearchIndex.build(slides)
         assertEquals(7, entries.size)
 
+        // Outline titles and previewText must not leak raw answers or corrections
+        val fbEntry = entries.first { it.id == "Q_Fb" }
+        assertFalse(fbEntry.title.contains("PFK-1"))
+        assertFalse(fbEntry.previewText.contains("PFK-1"))
+        assertTrue(fbEntry.previewText.contains("[blank]"))
+
+        val seEntry = entries.first { it.id == "Q_Se" }
+        assertFalse(seEntry.title.contains("hypophosphatemia"))
+        assertFalse(seEntry.previewText.contains("hypophosphatemia"))
+        assertTrue(seEntry.previewText.contains("hyperphosphatemia"))
+
         // Matches inside callout
         val calloutHits = SessionSearchIndex.search(entries, "NKCC2")
         assertEquals(1, calloutHits.size)
@@ -163,11 +175,12 @@ class SessionSearchAndFormattingTest {
         assertEquals(1, tableHits.size)
         assertEquals(0, tableHits.single().entry.outerSlideIndex)
 
-        // Matches inside nested QuizSlide v2.0 RelabelImage alias -> preserves quizId & question index
+        // Matches inside nested QuizSlide v2.0 RelabelImage alias -> preserves quizId & question index without leaking answer in snippet
         val relabelHits = SessionSearchIndex.search(entries, "Glomerular capsule")
         assertEquals(1, relabelHits.size)
         assertEquals("Comp_Quiz", relabelHits.single().entry.quizId)
         assertEquals(5, relabelHits.single().entry.quizQuestionIndex)
+        assertFalse(relabelHits.single().snippet.contains("Bowman capsule"))
 
         // Matches inside Mechanism
         val mechHits = SessionSearchIndex.search(entries, "Angiotensin")
@@ -176,12 +189,16 @@ class SessionSearchAndFormattingTest {
     }
 
     @Test
-    fun formatFillBlankTemplateWithBadges_preservesMathAndInlineCodeSpans() {
+    fun formatFillBlankTemplateWithBadges_preservesMathAndInlineCodeSpans_andIgnoresCurrency() {
         val template = "Code `{{not_a_blank}}`, math $\\frac{{1}}{{2}}$, real blank {{PFK-1}} and {{ATP}}."
         val formatted = formatFillBlankTemplateWithBadges(template)
         assertTrue(formatted.contains("`{{not_a_blank}}`"))
         assertTrue(formatted.contains("$\\frac{{1}}{{2}}$"))
         assertTrue(formatted.contains("`[ #1 ]`"))
         assertTrue(formatted.contains("`[ #2 ]`"))
+
+        val currencyTemplate = "Costs $5 for {{aspirin}} and $10 total."
+        val currencyFormatted = formatFillBlankTemplateWithBadges(currencyTemplate)
+        assertEquals("Costs $5 for `[ #1 ]` and $10 total.", currencyFormatted)
     }
 }

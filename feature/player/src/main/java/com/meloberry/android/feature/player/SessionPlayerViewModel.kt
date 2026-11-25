@@ -64,6 +64,7 @@ private data class SerializableFillBlankState(
     val checkAttempts: Int = 0,
     val firstTryCorrect: Boolean? = null,
     val isCorrect: Boolean? = null,
+    val overriddenQuestion: Boolean = false,
     val overriddenCorrect: Boolean = false,
     val anyFuzzy: Boolean = false
 )
@@ -130,6 +131,7 @@ private data class SerializableRelabelImageState(
 private data class PlayerSessionSnapshot(
     val hasStartedSession: Boolean = false,
     val sessionStartedEpochMs: Long? = null,
+    val completedAtEpochMs: Long? = null,
     val currentSlideIndex: Int = 0,
     val activeQuizQuestionIndex: Map<String, Int> = emptyMap(),
     val isFinished: Boolean = false,
@@ -233,6 +235,7 @@ class SessionPlayerViewModel internal constructor(
         }
 
     private var sessionStartedEpochMs: Long = restoredSnapshot?.sessionStartedEpochMs ?: nowMs()
+    private var completedAtEpochMs: Long? = restoredSnapshot?.completedAtEpochMs
     private var activeSlideEnterEpochMs: Long? = null
     private var isTelemetryPaused: Boolean = false
     private var latestDeck: SlideDeck? = null
@@ -270,6 +273,7 @@ class SessionPlayerViewModel internal constructor(
                         checkAttempts = s.checkAttempts,
                         firstTryCorrect = s.firstTryCorrect,
                         isCorrect = s.isCorrect,
+                        overriddenQuestion = s.overriddenQuestion,
                         overriddenCorrect = s.overriddenCorrect,
                         anyFuzzy = s.anyFuzzy
                     )
@@ -445,6 +449,7 @@ class SessionPlayerViewModel internal constructor(
         val deck = latestDeck
         val startMs = nowMs()
         sessionStartedEpochMs = startMs
+        completedAtEpochMs = null
         isTelemetryPaused = false
         activeSlideEnterEpochMs = startMs
         updateTelemetryAndSave { cur ->
@@ -540,11 +545,13 @@ class SessionPlayerViewModel internal constructor(
             val leafId = activeLeafSlideId(deck, telemetry.value.currentSlideIndex, telemetry.value.activeQuizQuestionIndex)
             flushLeafDwellTime(leafId, restartClock = false)
         }
+        completedAtEpochMs = nowMs()
         updateTelemetryAndSave { it.copy(isFinished = true) }
         generateReport(persistToHistory = true)
     }
 
     fun onReturnToSlides() {
+        completedAtEpochMs = null
         if (!isTelemetryPaused) {
             activeSlideEnterEpochMs = nowMs()
         }
@@ -613,7 +620,15 @@ class SessionPlayerViewModel internal constructor(
             val current = cur.fillBlankStates[slideId] ?: FillBlankSlideRuntimeState()
             cur.copy(
                 fillBlankStates = cur.fillBlankStates + (
-                    slideId to current.copy(inputsBySlot = current.inputsBySlot + (slotIndex to value))
+                    slideId to current.copy(
+                        inputsBySlot = current.inputsBySlot + (slotIndex to value),
+                        overriddenSlotIndices = current.overriddenSlotIndices - slotIndex,
+                        isChecked = false,
+                        isCorrect = null,
+                        overriddenQuestion = false,
+                        overriddenCorrect = false,
+                        anyFuzzy = false
+                    )
                 )
             )
         }
@@ -627,14 +642,15 @@ class SessionPlayerViewModel internal constructor(
             val eval = evaluateFillBlankUseCase(
                 payload = slide.question.payload,
                 userInputsBySlotIndex = current.inputsBySlot,
-                overriddenSlotIndices = current.overriddenSlotIndices
+                overriddenSlotIndices = current.overriddenSlotIndices,
+                overrideQuestionCorrect = current.overriddenQuestion
             )
             val updated = current.copy(
                 isChecked = true,
                 checkAttempts = current.checkAttempts + 1,
                 firstTryCorrect = current.firstTryCorrect ?: eval.isCorrect,
                 isCorrect = eval.isCorrect,
-                overriddenCorrect = eval.isOverridden,
+                overriddenCorrect = eval.isCorrect && eval.isOverridden,
                 anyFuzzy = eval.anyFuzzy
             )
             cur.copy(fillBlankStates = cur.fillBlankStates + (slideId to updated))
@@ -650,7 +666,8 @@ class SessionPlayerViewModel internal constructor(
             val eval = evaluateFillBlankUseCase(
                 payload = slide.question.payload,
                 userInputsBySlotIndex = current.inputsBySlot,
-                overriddenSlotIndices = nextOverriddenSlots
+                overriddenSlotIndices = nextOverriddenSlots,
+                overrideQuestionCorrect = current.overriddenQuestion
             )
             cur.copy(
                 fillBlankStates = cur.fillBlankStates + (
@@ -658,7 +675,7 @@ class SessionPlayerViewModel internal constructor(
                         overriddenSlotIndices = nextOverriddenSlots,
                         isChecked = true,
                         isCorrect = eval.isCorrect,
-                        overriddenCorrect = eval.isOverridden,
+                        overriddenCorrect = eval.isCorrect && eval.isOverridden,
                         anyFuzzy = eval.anyFuzzy
                     )
                 )
@@ -674,6 +691,7 @@ class SessionPlayerViewModel internal constructor(
                     slideId to current.copy(
                         isChecked = true,
                         isCorrect = true,
+                        overriddenQuestion = true,
                         overriddenCorrect = true,
                         anyFuzzy = false
                     )
@@ -692,6 +710,7 @@ class SessionPlayerViewModel internal constructor(
                         overriddenSlotIndices = emptySet(),
                         isChecked = false,
                         isCorrect = null,
+                        overriddenQuestion = false,
                         overriddenCorrect = false,
                         anyFuzzy = false
                     )
@@ -705,7 +724,11 @@ class SessionPlayerViewModel internal constructor(
     fun onSelectAssertionReason(slideId: String, code: String) {
         updateTelemetryAndSave { cur ->
             val current = cur.assertionReasonStates[slideId] ?: AssertionReasonSlideRuntimeState()
-            cur.copy(assertionReasonStates = cur.assertionReasonStates + (slideId to current.copy(selectedCode = code)))
+            cur.copy(
+                assertionReasonStates = cur.assertionReasonStates + (
+                    slideId to current.copy(selectedCode = code, isChecked = false, isCorrect = null)
+                )
+            )
         }
     }
 
@@ -748,7 +771,12 @@ class SessionPlayerViewModel internal constructor(
             }
             cur.copy(
                 spotErrorStates = cur.spotErrorStates + (
-                    slideId to current.copy(selectedSpans = nextSpans, pickedNoError = false)
+                    slideId to current.copy(
+                        selectedSpans = nextSpans,
+                        pickedNoError = false,
+                        isChecked = false,
+                        isCorrect = null
+                    )
                 )
             )
         }
@@ -762,7 +790,9 @@ class SessionPlayerViewModel internal constructor(
                 spotErrorStates = cur.spotErrorStates + (
                     slideId to current.copy(
                         pickedNoError = nextNoError,
-                        selectedSpans = if (nextNoError) emptySet() else current.selectedSpans
+                        selectedSpans = if (nextNoError) emptySet() else current.selectedSpans,
+                        isChecked = false,
+                        isCorrect = null
                     )
                 )
             )
@@ -774,7 +804,11 @@ class SessionPlayerViewModel internal constructor(
             val current = cur.spotErrorStates[slideId] ?: SpotErrorSlideRuntimeState()
             cur.copy(
                 spotErrorStates = cur.spotErrorStates + (
-                    slideId to current.copy(fixesBySpan = current.fixesBySpan + (spanIndex to fixText))
+                    slideId to current.copy(
+                        fixesBySpan = current.fixesBySpan + (spanIndex to fixText),
+                        isChecked = false,
+                        isCorrect = null
+                    )
                 )
             )
         }
@@ -826,7 +860,13 @@ class SessionPlayerViewModel internal constructor(
             val current = cur.differentiationStates[slideId] ?: DifferentiationSlideRuntimeState()
             cur.copy(
                 differentiationStates = cur.differentiationStates + (
-                    slideId to current.copy(fillInputsByCell = current.fillInputsByCell + (cellKey to value))
+                    slideId to current.copy(
+                        fillInputsByCell = current.fillInputsByCell + (cellKey to value),
+                        isChecked = false,
+                        isCorrect = null,
+                        overriddenCorrect = false,
+                        anyFuzzy = false
+                    )
                 )
             )
         }
@@ -843,7 +883,14 @@ class SessionPlayerViewModel internal constructor(
             }
             cur.copy(
                 differentiationStates = cur.differentiationStates + (
-                    slideId to current.copy(selectedErrorCells = nextCells, pickedNoError = false)
+                    slideId to current.copy(
+                        selectedErrorCells = nextCells,
+                        pickedNoError = false,
+                        isChecked = false,
+                        isCorrect = null,
+                        overriddenCorrect = false,
+                        anyFuzzy = false
+                    )
                 )
             )
         }
@@ -857,7 +904,11 @@ class SessionPlayerViewModel internal constructor(
                 differentiationStates = cur.differentiationStates + (
                     slideId to current.copy(
                         pickedNoError = nextNoError,
-                        selectedErrorCells = if (nextNoError) emptySet() else current.selectedErrorCells
+                        selectedErrorCells = if (nextNoError) emptySet() else current.selectedErrorCells,
+                        isChecked = false,
+                        isCorrect = null,
+                        overriddenCorrect = false,
+                        anyFuzzy = false
                     )
                 )
             )
@@ -869,7 +920,13 @@ class SessionPlayerViewModel internal constructor(
             val current = cur.differentiationStates[slideId] ?: DifferentiationSlideRuntimeState()
             cur.copy(
                 differentiationStates = cur.differentiationStates + (
-                    slideId to current.copy(rearrangeRows = rows)
+                    slideId to current.copy(
+                        rearrangeRows = rows,
+                        isChecked = false,
+                        isCorrect = null,
+                        overriddenCorrect = false,
+                        anyFuzzy = false
+                    )
                 )
             )
         }
@@ -961,7 +1018,12 @@ class SessionPlayerViewModel internal constructor(
             val current = cur.mechanismStates[slideId] ?: MechanismSlideRuntimeState()
             cur.copy(
                 mechanismStates = cur.mechanismStates + (
-                    slideId to current.copy(bankStepIds = bankStepIds, placedStepIds = placedStepIds)
+                    slideId to current.copy(
+                        bankStepIds = bankStepIds,
+                        placedStepIds = placedStepIds,
+                        isChecked = false,
+                        isCorrect = null
+                    )
                 )
             )
         }
@@ -1029,6 +1091,7 @@ class SessionPlayerViewModel internal constructor(
             ?.firstOrNull { it.id == slideId } ?: return
         updateTelemetryAndSave { cur ->
             val current = cur.relabelImageStates[slideId] ?: RelabelImageSlideRuntimeState()
+            if (current.isChecked && current.rating == rating) return@updateTelemetryAndSave cur
             val eval = evaluateRelabelImageUseCase.evaluateReveal(
                 payload = slide.question.payload,
                 revealedBoxIndices = current.revealedBoxIndices,
@@ -1050,7 +1113,13 @@ class SessionPlayerViewModel internal constructor(
             val current = cur.relabelImageStates[slideId] ?: RelabelImageSlideRuntimeState()
             cur.copy(
                 relabelImageStates = cur.relabelImageStates + (
-                    slideId to current.copy(assignedLabelsByBox = current.assignedLabelsByBox + (boxIndex to label))
+                    slideId to current.copy(
+                        assignedLabelsByBox = current.assignedLabelsByBox + (boxIndex to label),
+                        isChecked = false,
+                        isCorrect = null,
+                        overriddenCorrect = false,
+                        anyFuzzy = false
+                    )
                 )
             )
         }
@@ -1061,7 +1130,13 @@ class SessionPlayerViewModel internal constructor(
             val current = cur.relabelImageStates[slideId] ?: RelabelImageSlideRuntimeState()
             cur.copy(
                 relabelImageStates = cur.relabelImageStates + (
-                    slideId to current.copy(recallInputsByBox = current.recallInputsByBox + (boxIndex to value))
+                    slideId to current.copy(
+                        recallInputsByBox = current.recallInputsByBox + (boxIndex to value),
+                        isChecked = false,
+                        isCorrect = null,
+                        overriddenCorrect = false,
+                        anyFuzzy = false
+                    )
                 )
             )
         }
@@ -1319,12 +1394,17 @@ class SessionPlayerViewModel internal constructor(
             }
         }
 
+        val resolvedCompletedAt = completedAtEpochMs ?: nowMs().also {
+            completedAtEpochMs = it
+            saveSnapshotToHandle(telemetry.value)
+        }
+
         viewModelScope.launch {
             val built = buildAnalysisReportUseCase(
                 workspaceId = deck.workspaceId,
                 title = deck.title,
                 startedAtEpochMs = sessionStartedEpochMs,
-                completedAtEpochMs = nowMs(),
+                completedAtEpochMs = resolvedCompletedAt,
                 slideEntries = entries
             )
 
@@ -1374,6 +1454,7 @@ class SessionPlayerViewModel internal constructor(
         val snapshot = PlayerSessionSnapshot(
             hasStartedSession = state.hasStartedSession,
             sessionStartedEpochMs = sessionStartedEpochMs,
+            completedAtEpochMs = completedAtEpochMs,
             currentSlideIndex = state.currentSlideIndex,
             activeQuizQuestionIndex = state.activeQuizQuestionIndex,
             isFinished = state.isFinished,
@@ -1403,6 +1484,7 @@ class SessionPlayerViewModel internal constructor(
                     checkAttempts = s.checkAttempts,
                     firstTryCorrect = s.firstTryCorrect,
                     isCorrect = s.isCorrect,
+                    overriddenQuestion = s.overriddenQuestion,
                     overriddenCorrect = s.overriddenCorrect,
                     anyFuzzy = s.anyFuzzy
                 )
@@ -1468,7 +1550,10 @@ class SessionPlayerViewModel internal constructor(
             savedRunId = state.savedRunId
         )
         runCatching {
-            savedStateHandle[KEY_SESSION_SNAPSHOT] = snapshotJson.encodeToString(snapshot)
+            val encoded = snapshotJson.encodeToString(snapshot)
+            if (encoded.length <= MAX_BINDER_SNAPSHOT_CHARS) {
+                savedStateHandle[KEY_SESSION_SNAPSHOT] = encoded
+            }
         }
     }
 
@@ -1488,6 +1573,7 @@ class SessionPlayerViewModel internal constructor(
         const val KEY_CURRENT_SLIDE_INDEX = "currentSlideIndex"
         const val KEY_HAS_STARTED_SESSION = "hasStartedSession"
         const val KEY_SESSION_SNAPSHOT = "playerSessionSnapshot"
+        const val MAX_BINDER_SNAPSHOT_CHARS = 200_000
     }
 }
 

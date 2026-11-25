@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import com.meloberry.android.core.model.ContentAlign
 import com.meloberry.android.core.model.ResolvedSlideLayout
 import com.meloberry.android.core.model.SlideUiModel
+import com.meloberry.android.core.ui.markdown.MarkdownMathParser
 import com.meloberry.android.core.ui.markdown.MarkdownText
 import com.meloberry.android.core.ui.theme.LocalMeloberryColors
 import com.meloberry.android.domain.EvaluateFillBlankUseCase
@@ -61,13 +62,19 @@ internal fun FillBlankSlideCard(
     val effectivePaddingDp = if (isCompact) layout.cardPaddingDp.coerceAtMost(24) else layout.cardPaddingDp
 
     val evaluator = remember { EvaluateFillBlankUseCase() }
-    val evalResult = remember(payload, runtimeState.inputsBySlot, runtimeState.overriddenSlotIndices, runtimeState.overriddenCorrect, runtimeState.isChecked) {
+    val evalResult = remember(
+        payload,
+        runtimeState.inputsBySlot,
+        runtimeState.overriddenSlotIndices,
+        runtimeState.overriddenQuestion,
+        runtimeState.isChecked
+    ) {
         if (runtimeState.isChecked) {
             evaluator(
                 payload = payload,
                 userInputsBySlotIndex = runtimeState.inputsBySlot,
                 overriddenSlotIndices = runtimeState.overriddenSlotIndices,
-                overrideQuestionCorrect = runtimeState.overriddenCorrect && runtimeState.overriddenSlotIndices.isEmpty()
+                overrideQuestionCorrect = runtimeState.overriddenQuestion
             )
         } else {
             null
@@ -210,10 +217,14 @@ internal fun FillBlankSlideCard(
 
         if (runtimeState.isChecked) {
             val (msg, msgColor) = when {
-                runtimeState.overriddenCorrect -> "Marked correct (override)." to palette.ok
-                runtimeState.isCorrect == true && runtimeState.anyFuzzy -> "Correct (accepted fuzzy spelling match)." to palette.fuzzyAccent
-                runtimeState.isCorrect == true -> "All blanks correct!" to palette.ok
-                else -> "Review expected answers above." to palette.bad
+                runtimeState.isCorrect == true && (runtimeState.overriddenQuestion || runtimeState.overriddenCorrect) ->
+                    "Marked correct (override)." to palette.ok
+                runtimeState.isCorrect == true && runtimeState.anyFuzzy ->
+                    "Correct (accepted fuzzy spelling match)." to palette.fuzzyAccent
+                runtimeState.isCorrect == true ->
+                    "All blanks correct!" to palette.ok
+                else ->
+                    "Review expected answers above." to palette.bad
             }
             Text(text = msg, color = msgColor, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
         }
@@ -276,28 +287,32 @@ internal fun formatFillBlankTemplateWithBadges(template: String): String {
     var i = 0
     var blankNum = 0
     while (i < template.length) {
+        if (template[i] == '\\' && i + 1 < template.length) {
+            sb.append(template, i, i + 2)
+            i += 2
+            continue
+        }
         // Skip inline code spans
         if (template[i] == '`') {
-            var tickLen = 0
-            while (i + tickLen < template.length && template[i + tickLen] == '`') tickLen++
-            val closeIdx = findClosingTicks(template, i + tickLen, tickLen)
-            if (closeIdx >= 0) {
-                sb.append(template, i, closeIdx + tickLen)
-                i = closeIdx + tickLen
+            val codeSpan = MarkdownMathParser.findClosingBackticks(template, i)
+            if (codeSpan != null) {
+                val endExclusive = codeSpan.second + codeSpan.first
+                sb.append(template, i, endExclusive)
+                i = endExclusive
                 continue
             }
         }
-        // Skip display or inline math spans
-        if (template[i] == '$' && (i == 0 || template[i - 1] != '\\')) {
-            if (i + 1 < template.length && template[i + 1] == '$') {
-                val close = template.indexOf("$$", i + 2)
+        // Skip display or inline math spans (without misclassifying currency like $5 ... $10)
+        if (template[i] == '$') {
+            if (template.startsWith("$$", i)) {
+                val close = MarkdownMathParser.findClosingDisplayMath(template, i)
                 if (close > i + 1) {
                     sb.append(template, i, close + 2)
                     i = close + 2
                     continue
                 }
             } else {
-                val close = template.indexOf('$', i + 1)
+                val close = MarkdownMathParser.findClosingInlineMath(template, i)
                 if (close > i + 1) {
                     sb.append(template, i, close + 1)
                     i = close + 1
@@ -318,19 +333,4 @@ internal fun formatFillBlankTemplateWithBadges(template: String): String {
         i++
     }
     return sb.toString()
-}
-
-private fun findClosingTicks(text: String, start: Int, tickLen: Int): Int {
-    var j = start
-    while (j < text.length) {
-        if (text[j] == '`') {
-            var run = 0
-            while (j + run < text.length && text[j + run] == '`') run++
-            if (run == tickLen) return j
-            j += run
-        } else {
-            j++
-        }
-    }
-    return -1
 }

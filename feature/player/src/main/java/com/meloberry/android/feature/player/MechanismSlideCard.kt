@@ -340,11 +340,19 @@ internal fun MechanismSlideCard(
                             } else {
                                 "${step.orderGroup}."
                             }
-                            Text(
-                                text = "$label ${step.text}",
-                                color = palette.text,
-                                fontSize = 13.sp
-                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(
+                                    text = label,
+                                    color = palette.ok,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                MarkdownText(
+                                    markdown = step.text,
+                                    baseFontSizeSp = 13,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
                         }
                     }
                 }

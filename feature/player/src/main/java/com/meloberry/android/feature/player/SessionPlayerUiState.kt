@@ -27,6 +27,7 @@ data class FillBlankSlideRuntimeState(
     val checkAttempts: Int = 0,
     val firstTryCorrect: Boolean? = null,
     val isCorrect: Boolean? = null,
+    val overriddenQuestion: Boolean = false,
     val overriddenCorrect: Boolean = false,
     val anyFuzzy: Boolean = false
 )

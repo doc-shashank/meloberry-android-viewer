@@ -67,4 +67,15 @@ subprojects {
             compilerOptions.jvmTarget.set(JvmTarget.JVM_17)
         }
     }
+
+    tasks.withType<Test>().configureEach {
+        doFirst {
+            val rawLibPath = System.getProperty("java.library.path")
+            if (!rawLibPath.isNullOrEmpty() && rawLibPath.contains('"')) {
+                val cleaned = rawLibPath.replace("\"", "")
+                System.setProperty("java.library.path", cleaned)
+                systemProperty("java.library.path", cleaned)
+            }
+        }
+    }
 }

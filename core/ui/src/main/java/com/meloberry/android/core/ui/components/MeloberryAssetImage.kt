@@ -59,7 +59,7 @@ import coil.request.ImageRequest
 import com.meloberry.android.core.ui.theme.LocalMeloberryColors
 import java.io.File
 
-private object SharedSvgImageLoader {
+object SharedSvgImageLoader {
     @Volatile
     private var instance: ImageLoader? = null
 
