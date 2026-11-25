@@ -1,6 +1,6 @@
 [versions]
 # Meloberry Android — Single Source of Truth Versioning
-meloberryAppVersion = "2.0.0"
+meloberryAppVersion = "2.0.1"
 meloberryTargetPackageVersion = "2.0"
 meloberryLegacyPackageVersion = "1.0"
 meloberrySupportedPackageVersions = "1.0,2.0"

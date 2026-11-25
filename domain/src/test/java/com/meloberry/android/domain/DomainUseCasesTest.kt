@@ -339,8 +339,8 @@ class DomainUseCasesTest {
 
     @Test
     fun meloberryVersionInfo_matchesSingleSourceOfTruthVersioning() {
-        assertEquals("2.0.0", MeloberryVersionInfo.VERSION_NAME)
-        assertEquals(20000, MeloberryVersionInfo.VERSION_CODE)
+        assertEquals("2.0.1", MeloberryVersionInfo.VERSION_NAME)
+        assertEquals(20001, MeloberryVersionInfo.VERSION_CODE)
         assertEquals("2.0", MeloberryVersionInfo.TARGET_PACKAGE_VERSION)
         assertEquals("1.0", MeloberryVersionInfo.LEGACY_PACKAGE_VERSION)
         assertEquals("1.0", MeloberryVersionInfo.ANALYSIS_SCHEMA_VERSION)

@@ -1,4 +1,4 @@
-# Meloberry Android Architecture & Reference (`v2.0.0`)
+# Meloberry Android Architecture & Reference (`v2.0.1`)
 
 Technical specification covering module structure, SSOT versioning, `.mbypkg` v1.0/v2.0 ingestion, layout & grading parity with Meloberry CLI `v2.0.0`, player interaction, analysis schema, and persistence guarantees.
 
@@ -18,7 +18,7 @@ Technical specification covering module structure, SSOT versioning, `.mbypkg` v1
 ```
 
 - **SSOT Versioning (`gradle/libs.versions.toml` → `GenerateMeloberryVersionInfoTask`)**:
-  - `meloberryAppVersion = "2.0.0"` derives `versionCode = 20000` (`MAJOR * 10000 + MINOR * 100 + PATCH`).
+  - `meloberryAppVersion = "2.0.1"` derives `versionCode = 20001` (`MAJOR * 10000 + MINOR * 100 + PATCH`).
   - `meloberrySupportedPackageVersions = "1.0,2.0"` populates `MeloberryVersionInfo.SUPPORTED_PACKAGE_VERSIONS` used by `MbypkgArchiveDataSource`.
   - `meloberryTargetPackageVersion = "2.0"` and `meloberryAnalysisSchemaVersion = "1.0"` keep package exports, bundled samples, and UI version surfaces synchronized from a single source of truth.
 - **Tech Stack**: Kotlin 2.0, Jetpack Compose Material 3 (Adaptive `NavigationSuiteScaffold`), Hilt, Room, DataStore, `kotlinx.serialization`, Coil (`coil-compose` + `coil-svg` + `coil-gif`), `ru.noties:jlatexmath-android` (zero-WebView native LaTeX), JUnit 4 + `kotlinx.coroutines.test`.
@@ -48,7 +48,7 @@ Technical specification covering module structure, SSOT versioning, `.mbypkg` v1
 ## 3. Navigation, Player, Search & Rendering
 
 ### Adaptive Chrome & App Theme (`MainActivity`, `MeloberryApp`)
-- `MainActivity` handles incoming `ACTION_VIEW` intents for `.mbypkg` files and observes `PreferencesDataStoreSource.appThemeMode` (`BERRY`, `LIGHT`, `DARK`, `PAPER`), selectable from `LibraryScreen`'s palette menu alongside the `v2.0.0` version badge.
+- `MainActivity` handles incoming `ACTION_VIEW` intents for `.mbypkg` files and observes `PreferencesDataStoreSource.appThemeMode` (`BERRY`, `LIGHT`, `DARK`, `PAPER`), selectable from `LibraryScreen`'s palette menu alongside the `v2.0.1` version badge.
 - `MeloberryApp` hosts `NavigationSuiteScaffold`, switching `layoutType` to `NavigationSuiteType.None` on `PlayerDest` so `LibraryDest` and `HistoryDest` back-stack state stays intact.
 
 ### Article & Interactive Question Cards (`:feature:player`)
